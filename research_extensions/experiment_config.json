@@ -1,0 +1,14 @@
+{
+  "datasets": [
+    "C16",
+    "C17",
+    "BRACS"
+  ],
+  "methods": [
+    "baseline",
+    "label_smoothing"
+  ],
+  "label_smoothing": 0.1,
+  "epochs": 30,
+  "seed": 42
+}

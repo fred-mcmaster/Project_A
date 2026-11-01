@@ -1,0 +1,30 @@
+{
+  "test_suite": "tests/test_research_extensions.py",
+  "tests_passed": 8,
+  "notebook_model_and_engine_AST_match": true,
+  "full_checkpoint_inference_runs_verified": 6,
+  "fresh_training_smoke": {
+    "dataset": "C16",
+    "methods": [
+      "baseline",
+      "label_smoothing"
+    ],
+    "epochs": 1,
+    "matches_original_first_epoch": true,
+    "fresh_checkpoint_evaluation_passed": true,
+    "completed_run_cache_reuse_passed": true
+  },
+  "reported_experiments": {
+    "datasets": [
+      "C16",
+      "C17",
+      "BRACS"
+    ],
+    "methods": [
+      "baseline",
+      "label_smoothing"
+    ],
+    "epochs_per_run": 30,
+    "source": "original completed notebook experiments; independently verified checkpoint inference"
+  }
+}
