@@ -1,114 +1,268 @@
-# ECE1512 Project A - PyTorch MIL on WSI features
+﻿# ECE1512 Project A: reproducible ABMIL experiments
 
-This is the **starter package** for Project A. The project uses Attention-Based Multiple Instance Learning (ABMIL) for whole-slide histopathology classification. After completing Project A, you should understand the standard PyTorch supervised-learning pipeline and be able to construct a basic PyTorch training pipeline on your own.
+This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. Its objectives are to implement a complete PyTorch training/evaluation pipeline and test whether **uniform label smoothing (epsilon = 0.1)** improves classification and probability calibration compared with ordinary cross-entropy.
 
-## 1. Download the pre-extracted features
+The implemented comparison covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: two methods per dataset, **30 epochs per run, seed 42**. The accompanying [baseline report](ECE1512_ProjectA_Baseline_Evaluation_Report.docx) and [extension report](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) report these six experiments. Diverse two-head attention is a proposal only. The image encoder is fixed; these experiments train the MIL aggregator and classifier, not a feature extractor.
 
-The pre-extracted histopathology features are hosted on Zenodo:
+## 1. What is included
 
-https://zenodo.org/records/23130543
+| Artifact | Location |
+|---|---|
+| Pinned training/evaluation dependencies | [`requirements.txt`](requirements.txt) |
+| Optional notebook/WSI dependencies | [`requirements-notebook.txt`](requirements-notebook.txt) |
+| Training CLI and shared model/engine | [`research_extensions/`](research_extensions/) |
+| Evaluation CLI | [`research_extensions/evaluate_extension.py`](research_extensions/evaluate_extension.py) |
+| All six original validation-selected checkpoints (~4 MB total) | [`checkpoints/`](checkpoints/), included directly in Git |
+| Checkpoint hashes and original compute environment | [`checkpoints/manifest.json`](checkpoints/manifest.json), [`checkpoints/environment.json`](checkpoints/environment.json) |
+| Per-slide test probabilities, histories, ordered splits, metrics, figures | [`research_extensions/evaluation_results/`](research_extensions/evaluation_results/) |
+| Dataset checksums and immutable download revision | [`data_manifest.json`](data_manifest.json) |
+| Dataset-specific settings and experiment settings | [`config/`](config/), [`experiment_config.json`](research_extensions/experiment_config.json) |
+| Educational notebook | [`ECE1512_ProjectA_Student.ipynb`](ECE1512_ProjectA_Student.ipynb) |
 
+Feature files and raw slides are downloaded separately. Generated runs go under ignored `results/`; the checkpoints and reference results above are versioned. The notebook is supplied with outputs cleared; the CLI is the primary reproduction path.
 
-Download the HDF5 feature files and place them in the designated `feature` folder.
+## 2. Clone and install
+
+Use **64-bit Python 3.12** (the recorded version is **3.12.7**). Run all commands from the repository root.
+
+```bash
+git clone https://github.com/fred-mcmaster/Project_A.git
+cd Project_A
+```
+
+Create and activate an isolated environment using your platform's commands.
+
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Linux/macOS:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+
+Choose **one** PyTorch installation below, then install the remaining pinned dependencies. The original experiments used Windows, PyTorch **2.13.0+cu126**, CUDA 12.6, and an **NVIDIA GeForce RTX 3080 Ti**. CUDA requires a compatible NVIDIA driver. See the [PyTorch installation documentation](https://pytorch.org/get-started/locally/).
+
+```bash
+# Original CUDA build, for Windows/Linux with an NVIDIA GPU:
+python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu126
+
+# Or CPU build, for Windows/Linux without a compatible GPU:
+python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Or macOS (the supplied CLI uses CPU on macOS):
+python -m pip install torch==2.13.0
+```
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip check
+```
+
+The direct package versions are pinned to the recorded environment. Platform-specific transitive dependencies are resolved by pip. CPU inference and training are supported but can be substantially slower. The original GPU has 12 GB VRAM; minimum memory and wall-clock runtime have not been benchmarked. Full variable-length bags are used.
+
+## 3. Dataset source and download
+
+The course's pre-extracted **WSI Feature** dataset is published by Linfeng Ye at [Zenodo, DOI 10.5281/zenodo.23130543](https://zenodo.org/records/23130543), with a [Hugging Face copy](https://huggingface.co/datasets/LeonYe/ECE1512-WSI-Feature/tree/6df7ef4b42b7ecd11633722a392a1efc6d80bcc7). The underlying datasets are [CAMELYON16](https://camelyon16.grand-challenge.org/), [CAMELYON17](https://camelyon17.grand-challenge.org/), and [BRACS](https://www.bracs.icar.cnr.it/). Use the supplied features for this experiment; newly extracted features are a different input representation.
+
+Download all three HDF5 files (**15.54 GB total**, plus environment/output storage):
+
+```bash
+python scripts/download_features.py
+python scripts/verify_data.py
+```
+
+The downloader uses the immutable Hugging Face revision in `data_manifest.json`, streams one file at a time, and checks byte size and SHA256 before accepting it. Existing files are checked and reused. To download just one dataset, append `--datasets C16`, `--datasets C17`, or `--datasets BRACS`. To inspect URLs without downloading, use `--dry-run`. Interrupted `.part` files are restarted on the next download attempt.
+
+The destination layout intentionally matches the existing YAML files and original checkpoints:
 
 ```text
 feature/
-  C16/patch_feats_pretrain_medical_ssl.h5
-  C17/patch_feats_pretrain_medical_ssl.h5
-  BRACS/patch_feats_pretrain_medical_ssl.h5
+  BRACS/
+    patch_feats_pretrain_medical_ssl.h5       # BRACS
+    C16/patch_feats_pretrain_medical_ssl.h5   # CAMELYON16
+    C17/patch_feats_pretrain_medical_ssl.h5   # CAMELYON17
 ```
 
-If you store the HDF5 feature files elsewhere, edit only `data_dir` in the selected YAML file.
-
-## 2. Coding
-
-Open:
-
-```text
-ECE1512_ProjectA_Student.ipynb
-```
-
-The notebook now includes the completed masked ABMIL model, training and evaluation
-pipeline, report answers, and research extension. Run its cells in order. Step 9
-compares ordinary cross-entropy with label smoothing on C16, C17, and BRACS using
-the configured 30 epochs for each of the six experiments.
-
-For this local feature layout, the C16 and C17 YAML files point to
-`feature/BRACS/C16/` and `feature/BRACS/C17/`. BRACS uses `feature/BRACS/`.
-The existing HDF5 files are used directly.
-
-## 3. What is provided
-
-- `dataloader.py` - HDF5 reading, dataset-specific splitting, few-shot selection, and padded MIL collation.
-- `utils.py` - configuration loading, seeding, feature-dimension checks, and AUROC/F1 metric helpers.
-- `config/` - templates for CAMELYON16, CAMELYON17, and BRACS.
-- `dataset_csv/` - metadata required by the CAMELYON17 and BRACS split logic.
-- `ECE1512_ProjectA_Student.ipynb` - guided PyTorch implementation, baseline experiment, and ablation workspace.
-
-The completed ABMIL model and training loop are implemented directly in the notebook.
-
-## 4. Expected HDF5 layout
-
-Each top-level HDF5 key is one slide:
-
-```text
-slide_id/
-  feat    [num_patches, feature_dim]
-  coords  [num_patches, 2]   # optional for training
-attrs:
-  label   integer class label
-```
-
-Different slides contain different numbers of patches. `mil_collate_fn` pads a batch and returns a boolean `mask` that marks valid patches.
-
-## 5. Colab/local setup
-
-Install dependencies with:
+For a manual Zenodo download, obtain `C16.zip`, `C17.zip`, and `BRACS.zip`, extract them, and place each `patch_feats_pretrain_medical_ssl.h5` at the corresponding path above. Check the files after extraction:
 
 ```bash
-pip install -r requirements.txt
+python scripts/download_features.py --verify-only
+python scripts/verify_data.py
 ```
 
-In Colab, place the project folder in Google Drive or upload it to the runtime, set `PROJECT_DIR` in the notebook, and select `C16`, `C17`, or `BRACS`.
+If storing features elsewhere, edit only `data_dir` in the relevant `config/*.yml` and run `verify_data.py`; training and checkpoint evaluation both use these checkout-local paths. `download_features.py` always uses the destinations recorded in `data_manifest.json`; its `--verify-only` option checks that default layout.
 
-For an initial debugging run, use only a few epochs. Once your pipeline passes the sanity checks, run the full baseline and keep the same split, seed, and evaluation protocol for your ablations.
+Each top-level HDF5 key is a slide ID, containing `feat [num_patches, 384]`, optional `coords [num_patches, 2]`, and an integer `label` attribute on the slide group. Labels are read from HDF5. The versioned [metadata CSVs](dataset_csv/README.md) supply the C17 centers/patient IDs and BRACS split assignments. They are already included; no access to the original author's local metadata path is needed.
 
-## 6. Running and checking the completed notebook
+| Dataset | Classes | Train | Validation | Test | Split protocol |
+|---|---:|---:|---:|---:|---|
+| C16 | 2 | 242 | 27 | 129 | IDs containing `test` held out; stratified 10% validation of remaining slides, seed 42 |
+| C17 | 4 | 269 | 30 | 200 | Centers 0-2 for development, centers 3-4 for test; stratified 10% slide-level validation, seed 42 |
+| BRACS | 7 | 389 | 62 | 86 | Versioned CSV train/validation/test assignments; original seven classes |
 
-In a local notebook editor, select `.venv/Scripts/python.exe` as the Python kernel.
-The project-local environment contains the missing dependencies and uses the
-existing CUDA-enabled PyTorch installation. To execute and save all notebook
-outputs from PowerShell:
+`verify_data.py` checks every slide's feature shape, label, patch count, and **ordered** split membership against the reference exports. C17's split is a course experiment partition of the available challenge training slides; it is not the official challenge train/test partition. Its training and validation sets share 27 patients; test patients and centers remain separate.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/execute_notebook.py
+## 4. Verify or evaluate the pretrained models
+
+The following command reproduces all reported metrics from the **tracked test probabilities**, verifies each checkpoint's SHA256, and checks that the selected epoch matches the validation history. It requires **no downloaded features and no retraining**:
+
+```bash
+python scripts/verify_results.py --device cpu
 ```
 
-Completed experiments are reused when the notebook code, configuration, feature
-file, split membership, and epoch count match. Set `REUSE_COMPLETED_RUNS = False`
-in the notebook to force fresh training. Results are written to `results/`:
+To actually run inference using all six bundled checkpoints, first download the features, then run:
 
-- `comparison.csv` and `extension_deltas.csv`: baseline/extension test results.
-- `<dataset>_<method>/best.pt`: validation-selected weights, configuration, and history.
-- `<dataset>_<method>/history.csv`, `test_metrics.json`, and `test_predictions.csv`.
-- `<dataset>/splits.csv`: exact slide membership, labels, and patch counts.
-- `learning_and_calibration.png`: validation curves and test reliability plots.
-- `per_class_metrics.csv` and `confusion_matrices.png`: class-level test diagnostics.
-- `environment.json`: versions and compute device used by the experiments.
-
-The notebook contains the written explanations, proposals, measured results,
-and discussion. Its optional WSI overlays use the files in `slide/`;
-`scripts/download_slides.py` downloads the three assets specified by Step 8.
-
-```powershell
-.\.venv\Scripts\python.exe scripts/validate_notebook.py
-.\.venv\Scripts\python.exe scripts/summarize_results.py
-.\.venv\Scripts\python.exe scripts/verify_results.py
+```bash
+python -m research_extensions.evaluate_extension --recompute --device cuda
 ```
 
-The first command checks masking, permutation invariance, optimization,
-evaluation, label smoothing, and real-data forward/backward passes. After all
-six experiments finish, the second refreshes the notebook's recorded discussion
-and class-level figures. The third independently checks the reported metrics
-and selected epochs against saved predictions and histories, and verifies the
-two WSI overlays.
+Use `--device cpu` if needed. Outputs go to `results/pretrained_evaluation/`, preserving the versioned reference artifacts. The evaluator verifies ordered test IDs/labels and compares recomputed probabilities with the saved predictions (`rtol=2e-5`, `atol=2e-6`). It also independently recomputes the metrics (`rtol=2e-5`, `atol=1e-5`). `evaluation_provenance.json` records actual checkpoint hashes, execution mode, device, and prediction differences.
+
+## 5. Train and evaluate all experiments
+
+After dataset verification, run:
+
+```bash
+python -m research_extensions.train_extension --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_evaluation
+```
+
+The first command trains all six experiments and selects checkpoints using **validation macro-AUROC + macro-F1**, keeping the earliest epoch on a tie. It never evaluates the test split. The second command performs final test inference on those selected checkpoints. Each method resets both model initialization and the independent training-sampler seed.
+
+Training writes `<dataset>_<method>/best.pt`, `history.csv`, `manifest.json`, and `<dataset>/splits.csv`. Evaluation writes `extension_comparison.csv`, `extension_deltas.csv`, per-class metrics, calibration/confusion figures, and per-run test probabilities/metrics. Checkpoints include model weights, selected epoch, completed epoch count, configuration, training signature, and history.
+
+Completed experiments with matching signatures are reused. To force a fresh run, choose a new training output directory and pass that same directory as evaluation's `--runs-dir`, or explicitly use `--overwrite`. A changed code/configuration signature requires a new directory or `--overwrite`. These local cache signatures include feature file timestamps and paths; they are not intended to match across machines. Checkpoint hashes identify the original supplied models.
+
+For a short pipeline check (not a reported result):
+
+```bash
+python -m research_extensions.train_extension --datasets C16 --epochs 1 --device cuda --output-dir results/smoke
+python -m research_extensions.evaluate_extension --datasets C16 --runs-dir results/smoke --recompute --device cuda --output-dir results/smoke_evaluation
+```
+
+## 6. Hyperparameters and experiment configuration
+
+| Setting | Value used for every reported run |
+|---|---|
+| Features | Fixed medical-SSL features, 384 dimensions; every patch in each bag |
+| Projection | Linear(384, 256), ReLU |
+| Attention | One gated head: tanh and sigmoid branches, 256 -> 128 -> scalar, masked patch softmax |
+| Classifier | Linear(256, C); C = 2 / 4 / 7 for C16 / C17 / BRACS |
+| Dropout | 0.0 |
+| Training objective | Baseline: ordinary CE; extension: CE with uniform label smoothing epsilon = 0.1 |
+| Optimizer | AdamW; learning rate = 0.0001; weight decay = 0.00001; default betas = (0.9, 0.999), eps = 1e-8 |
+| Schedule | Constant learning rate; no warm-up, scheduler, early stopping, or augmentation |
+| Epochs / batch size | 30 / 1 slide |
+| Training subset | All training slides (`n_shot=0`) |
+| Seed | 42 for Python, NumPy, PyTorch, and the training sampler |
+| Data loading | 0 workers; training shuffled, validation/test ordered; CPU threads capped at 4 |
+| Model selection | Maximum validation macro-AUROC + macro-F1, earliest tie |
+| Validation/test loss | Ordinary hard-target cross-entropy for both methods |
+
+Dataset-specific values live in `config/*.yml`; datasets, methods, epochs, seed, and epsilon also live in `research_extensions/experiment_config.json`. CLI flags override the experiment JSON; the CLI infers feature dimension from the HDF5 file. `warmup_epoch` and `n_res` are inherited starter fields and are **unused**. Label smoothing uses `q = (1-epsilon) * one_hot(y) + epsilon/C`.
+
+## 7. Results and exact commands for every row
+
+These values match the supplied reports and [`extension_comparison.csv`](research_extensions/evaluation_results/extension_comparison.csv). All six runs completed 30 epochs; selected epochs below are **one-based**. AUROC is macro one-vs-rest (binary C16 equals positive-class AUROC); F1 is macro-F1. Accuracy is a percentage. NLL is mean hard-target CE, Brier is the mean sum of squared class-probability errors, and ECE uses 15 equal-width top-label confidence bins. Lower NLL/Brier/ECE is better.
+
+| Row | Dataset | Method | Selected epoch | Accuracy (%) | AUROC | Macro-F1 | NLL | Brier | ECE |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| [R1](#r1-c16-baseline) | C16 | Baseline CE | 3 | 88.37 | 0.9342 | 0.8668 | 0.2804 | 0.1628 | 0.0564 |
+| [R2](#r2-c16-label-smoothing) | C16 | Label smoothing | 3 | 88.37 | 0.9383 | 0.8668 | 0.3175 | 0.1791 | 0.1146 |
+| [R3](#r3-c17-baseline) | C17 | Baseline CE | 22 | 78.50 | 0.8243 | 0.5339 | 0.7347 | 0.3253 | 0.1148 |
+| [R4](#r4-c17-label-smoothing) | C17 | Label smoothing | 5 | 80.50 | 0.8464 | 0.4303 | 0.5466 | 0.2797 | 0.0561 |
+| [R5](#r5-bracs-baseline) | BRACS | Baseline CE | 6 | 39.53 | 0.8043 | 0.3494 | 1.4266 | 0.7183 | 0.2547 |
+| [R6](#r6-bracs-label-smoothing) | BRACS | Label smoothing | 6 | 39.53 | 0.7996 | 0.3534 | 1.4223 | 0.7029 | 0.2315 |
+
+For each row below: the **first command** reproduces the reported checkpoint's inference, and the **second and third commands** independently retrain and evaluate that row. Run these after setup/download. For verification without features, omit `--recompute` from the first command. For CPU execution, replace `--device cuda` with `--device cpu`.
+
+### R1: C16 baseline
+
+```bash
+python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --recompute --device cuda --output-dir results/pretrained_R1
+python -m research_extensions.train_extension --datasets C16 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R1
+```
+
+### R2: C16 label smoothing
+
+```bash
+python -m research_extensions.evaluate_extension --datasets C16 --methods label_smoothing --recompute --device cuda --output-dir results/pretrained_R2
+python -m research_extensions.train_extension --datasets C16 --methods label_smoothing --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --datasets C16 --methods label_smoothing --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R2
+```
+
+### R3: C17 baseline
+
+```bash
+python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --recompute --device cuda --output-dir results/pretrained_R3
+python -m research_extensions.train_extension --datasets C17 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R3
+```
+
+### R4: C17 label smoothing
+
+```bash
+python -m research_extensions.evaluate_extension --datasets C17 --methods label_smoothing --recompute --device cuda --output-dir results/pretrained_R4
+python -m research_extensions.train_extension --datasets C17 --methods label_smoothing --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --datasets C17 --methods label_smoothing --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R4
+```
+
+### R5: BRACS baseline
+
+```bash
+python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --recompute --device cuda --output-dir results/pretrained_R5
+python -m research_extensions.train_extension --datasets BRACS --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R5
+```
+
+### R6: BRACS label smoothing
+
+```bash
+python -m research_extensions.evaluate_extension --datasets BRACS --methods label_smoothing --recompute --device cuda --output-dir results/pretrained_R6
+python -m research_extensions.train_extension --datasets BRACS --methods label_smoothing --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
+python -m research_extensions.evaluate_extension --datasets BRACS --methods label_smoothing --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R6
+```
+
+The supplied checkpoints and saved probabilities support checking the reported values to the displayed precision. Fresh retraining can differ across hardware, drivers, or dependency builds despite fixed seeds; bitwise-identical training across platforms is not guaranteed. These are **single-seed** comparisons, with no confidence intervals or claim of statistical significance. Label smoothing has mixed effects: it worsens C16 calibration, improves C17 calibration while reducing minority-class recall/macro-F1, and produces small mixed changes on BRACS.
+
+## 8. Validation and optional notebook/WSI workflow
+
+```bash
+python -m unittest discover -s research_extensions/tests -v
+```
+
+The suite checks model/engine equivalence with the notebook, smoothing values/gradients, padding and permutation behavior, controlled learning, paired seeds/order, validation-only selection, known probability metrics, checkpoint relocation, and the bundled results. Real-feature forward/backward integration checks run when all features are present; otherwise that test is explicitly skipped. Saved-artifact tests run without feature downloads.
+
+For the educational notebook and optional raw-WSI attention overlays:
+
+```bash
+python -m pip install -r requirements-notebook.txt
+python -m ipykernel install --sys-prefix --name python3 --display-name "Project A"
+python scripts/validate_notebook.py
+python scripts/execute_notebook.py
+```
+
+Alternatively select the new environment's interpreter in your notebook editor and run the cells in order. Set `PROJECT_DIR` if working outside the repository or in Colab. The notebook uses its own `results/` runs/cache and can train all six models; it does not automatically reuse `checkpoints/`. CLI runs and results are sufficient for reproducing the tables.
+
+The optional overlays need approximately **4.95 GB** of raw slide/XML assets:
+
+```bash
+python scripts/download_slides.py
+```
+
+Run the notebook again after downloading to generate the overlays. `scripts/summarize_results.py` refreshes the notebook's discussion from its own completed `results/comparison.csv`; it is a notebook-only helper. OpenSlide may require a supported native library on your platform; see the [OpenSlide Python installation instructions](https://openslide.org/api/python/).
+
+The reports' historical references to `results/<dataset>_<method>/best.pt` correspond to the byte-identical files now included under `checkpoints/<dataset>_<method>/best.pt`. Historical histories, predictions, and split files are included under `research_extensions/evaluation_results/`.
+
+## References
+
+- Ilse, Tomczak, and Welling. [Attention-based Deep Multiple Instance Learning](https://proceedings.mlr.press/v80/ilse18a.html), ICML 2018.
+- Mueller, Kornblith, and Hinton. [When Does Label Smoothing Help?](https://arxiv.org/abs/1906.02629), NeurIPS 2019.
+- Ye, Linfeng. [WSI Feature](https://doi.org/10.5281/zenodo.23130543), course feature release, 2026.

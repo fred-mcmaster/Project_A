@@ -3,7 +3,9 @@ import ast
 import json
 import os
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import torch
@@ -14,8 +16,8 @@ from dataloader import mil_collate_fn
 from research_extensions.abmil_model import ABMIL
 from research_extensions.training_engine import make_loaders, train_one_epoch, evaluate
 from research_extensions.label_smoothing_loss import make_training_loss, make_evaluation_loss
-from research_extensions.experiment_utils import prepare_dataset, selected_epoch
-from research_extensions.evaluate_extension import metrics_from_predictions
+from research_extensions.experiment_utils import prepare_dataset, selected_epoch, config_from_checkpoint
+from research_extensions.evaluate_extension import metrics_from_predictions, read_run, main as evaluate_main
 
 ROOT=Path(os.environ.get('ECE1512_PROJECT_DIR',Path(__file__).resolve().parents[2]))
 torch.set_num_threads(4)
@@ -111,6 +113,11 @@ class ResearchExtensionTests(unittest.TestCase):
         self.assertAlmostEqual(metrics['loss'],-np.log([.8,.6,.1]).mean())
 
     def test_real_feature_bags_all_datasets(self):
+        import yaml
+        for config in (ROOT/'config').glob('*.yml'):
+            feature = Path(yaml.safe_load(config.read_text())['data_dir'])
+            if not (feature if feature.is_absolute() else ROOT/feature).is_file():
+                self.skipTest('Download all three feature files to run the real-data integration check.')
         for dataset in ('C16','C17','BRACS'):
             conf,datasets=prepare_dataset(ROOT,dataset,42)
             batch=mil_collate_fn([datasets[0][0],datasets[0][1]])
@@ -120,6 +127,48 @@ class ResearchExtensionTests(unittest.TestCase):
             loss.backward()
             self.assertTrue(torch.isfinite(loss))
             self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters()))
+
+    def test_checkpoint_paths_relocate_without_changing_model_settings(self):
+        checkpoint = dict(config=dict(dataset='CAMELYON17',data_dir='/old/machine/features.h5',
+            dataset_csv_dir='/old/machine/metadata',camelyon17_csv='/old/machine/meta.csv',
+            D_feat=384,D_inner=256,D_attn=128,n_class=4,seed=42,lr=1e-4))
+        conf = config_from_checkpoint(checkpoint, ROOT)
+        self.assertEqual(conf.data_dir, str((ROOT/'feature/BRACS/C17/patch_feats_pretrain_medical_ssl.h5').resolve()))
+        self.assertEqual(conf.dataset_csv_dir, str((ROOT/'dataset_csv').resolve()))
+        self.assertFalse(hasattr(conf, 'camelyon17_csv'))
+        self.assertEqual((conf.D_feat,conf.n_class,conf.seed,conf.lr),(384,4,42,1e-4))
+        self.assertEqual(checkpoint['config']['data_dir'], '/old/machine/features.h5')
+
+    def test_bundled_artifacts_match_checkpoints_and_results_table(self):
+        comparison=pd.read_csv(ROOT/'research_extensions/evaluation_results/extension_comparison.csv')
+        self.assertEqual(len(comparison),6)
+        for row in comparison.itertuples():
+            run,saved,history,splits,conf,checkpoint=read_run(ROOT,
+                ROOT/'research_extensions/evaluation_results',row.dataset,row.method,ROOT/'checkpoints')
+            self.assertTrue(checkpoint.is_file())
+            self.assertEqual(len(history),30)
+            self.assertEqual(saved['best_epoch']+1,row.best_epoch)
+            self.assertEqual(conf.seed,row.seed)
+            predictions=pd.read_csv(run/'test_predictions.csv')
+            test=splits[splits.split.eq('test')]
+            self.assertEqual(predictions.slide_id.tolist(),test.slide_id.tolist())
+            self.assertEqual(predictions.label.tolist(),test.label.tolist())
+            metrics=metrics_from_predictions(predictions,int(conf.n_class))
+            recorded=json.loads((run/'test_metrics.json').read_text())
+            for key,value in metrics.items():
+                np.testing.assert_allclose(value,getattr(row,key),rtol=2e-5,atol=1e-5)
+                np.testing.assert_allclose(value,recorded[key],rtol=2e-5,atol=1e-5)
+
+    def test_single_row_evaluation_requires_no_feature_access(self):
+        with tempfile.TemporaryDirectory() as output, patch(
+                'research_extensions.evaluate_extension.build_HDF5_feat_dataset',
+                side_effect=AssertionError('Saved-prediction verification must not read features.')):
+            evaluate_main(['--project-dir',str(ROOT),'--datasets','C16','--methods','baseline',
+                           '--device','cpu','--output-dir',output])
+            table=pd.read_csv(Path(output)/'extension_comparison.csv')
+            self.assertEqual(len(table),1)
+            self.assertEqual(table.iloc[0]['method'],'baseline')
+            self.assertEqual(len(pd.read_csv(Path(output)/'extension_deltas.csv')),0)
 
 
 if __name__=='__main__':

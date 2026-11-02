@@ -1,8 +1,8 @@
 ﻿"""Compare frozen baseline and label-smoothing checkpoints on all three datasets.
 
-Defaults to the six original notebook runs in results/. Existing predictions are
-verified and reused. --recompute reruns inference with the exported ABMIL model
-and checks the predictions against the saved files; it never reselects an epoch.
+Defaults to the six tracked prediction/history exports and bundled checkpoints.
+Existing predictions are verified and reused without feature files. --recompute
+reruns inference and checks saved predictions; it never reselects an epoch.
 """
 import argparse
 import json
@@ -51,12 +51,19 @@ def metrics_from_predictions(frame, n_classes, n_bins=15):
                 brier=float(np.square(p - np.eye(n_classes)[y]).sum(1).mean()), ece=float(ece))
 
 
-def read_run(root, runs_dir, dataset, method):
+def read_run(root, runs_dir, dataset, method, checkpoints_dir=None):
     run_dir = runs_dir / f'{dataset}_{method}'
     checkpoint_path = run_dir / 'best.pt'
+    if not checkpoint_path.is_file() and checkpoints_dir is not None:
+        checkpoint_path = checkpoints_dir / run_dir.name / 'best.pt'
+        manifest = json.loads((checkpoints_dir / 'manifest.json').read_text(encoding='utf-8'))
+        entry = next(row for row in manifest['runs'] if row['dataset'] == dataset and row['method'] == method)
+        if sha256_file(checkpoint_path) != entry['sha256']:
+            raise ValueError(f'Bundled checkpoint SHA256 mismatch: {checkpoint_path}')
     saved = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
     history = pd.read_csv(run_dir / 'history.csv')
-    split_table = pd.read_csv(runs_dir / dataset / 'splits.csv')
+    split_path = run_dir / 'splits.csv'
+    split_table = pd.read_csv(split_path if split_path.is_file() else runs_dir / dataset / 'splits.csv')
     if len(history) != int(saved['epochs_completed']):
         raise ValueError(f'Incomplete history: {run_dir}')
     np.testing.assert_array_equal(history.epoch, np.arange(len(history)))
@@ -72,7 +79,7 @@ def read_run(root, runs_dir, dataset, method):
         raise ValueError('Saved train/validation/test splits must be nonempty and disjoint.')
     if split_table.slide_id.duplicated().any():
         raise ValueError('Duplicate slide IDs in saved splits.')
-    return run_dir, saved, history, split_table, conf
+    return run_dir, saved, history, split_table, conf, checkpoint_path
 
 
 def check_pair(pair):
@@ -85,7 +92,7 @@ def check_pair(pair):
     pd.testing.assert_frame_equal(left['splits'], right['splits'])
 
 
-def plots(output, records, datasets):
+def plots(output, records, datasets, methods):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -93,7 +100,7 @@ def plots(output, records, datasets):
     fig, axes = plt.subplots(2, len(datasets), figsize=(5*len(datasets),8), squeeze=False)
     for col, dataset in enumerate(datasets):
         axes[1,col].plot([0,1],[0,1],'--',color='gray',label='ideal')
-        for method in ('baseline','label_smoothing'):
+        for method in methods:
             record = records[(dataset,method)]
             history, pred = record['history'], record['predictions']
             axes[0,col].plot(history.epoch+1,history.val_loss,label=method,color=colors[method])
@@ -113,9 +120,9 @@ def plots(output, records, datasets):
     fig.tight_layout()
     fig.savefig(output/'extension_learning_and_calibration.png',dpi=180,bbox_inches='tight')
     plt.close(fig)
-    fig, axes = plt.subplots(2,len(datasets),figsize=(5*len(datasets),9),squeeze=False,layout='constrained')
+    fig, axes = plt.subplots(len(methods),len(datasets),figsize=(5*len(datasets),4.5*len(methods)),squeeze=False,layout='constrained')
     for col,dataset in enumerate(datasets):
-        for row,method in enumerate(('baseline','label_smoothing')):
+        for row,method in enumerate(methods):
             record=records[(dataset,method)]
             pred,n_class=record['predictions'],int(record['conf'].n_class)
             count=confusion_matrix(pred.label,pred.prediction,labels=np.arange(n_class))
@@ -135,14 +142,17 @@ def plots(output, records, datasets):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-dir',type=Path,default=Path(__file__).resolve().parents[1])
-    parser.add_argument('--runs-dir',type=Path,default=Path('results'))
-    parser.add_argument('--output-dir',type=Path,default=Path('research_extensions/evaluation_results'))
+    parser.add_argument('--runs-dir',type=Path,default=Path('research_extensions/evaluation_results'))
+    parser.add_argument('--checkpoints-dir',type=Path,default=Path('checkpoints'),help='Fallback for bundled pretrained weights.')
+    parser.add_argument('--output-dir',type=Path,default=Path('results/pretrained_evaluation'))
     parser.add_argument('--datasets',nargs='+',choices=list(CONFIG_FILES),default=list(CONFIG_FILES))
+    parser.add_argument('--methods',nargs='+',choices=['baseline','label_smoothing'],default=['baseline','label_smoothing'])
     parser.add_argument('--recompute',action='store_true',help='Reproduce checkpoint inference and compare to any saved predictions.')
     parser.add_argument('--device',choices=['auto','cpu','cuda'],default='auto')
     args=parser.parse_args(argv)
     root=args.project_dir.resolve()
     runs_dir=resolve_path(root,args.runs_dir).resolve()
+    checkpoints_dir=resolve_path(root,args.checkpoints_dir).resolve()
     output=resolve_path(root,args.output_dir).resolve()
     if output == runs_dir:
         parser.error('Use a separate output directory to preserve source experiments.')
@@ -155,10 +165,11 @@ def main(argv=None):
     rows=[]
     for dataset in args.datasets:
         pair={}
-        for method in ('baseline','label_smoothing'):
-            run_dir,saved,history,split_table,conf=read_run(root,runs_dir,dataset,method)
-            pair[method]=dict(saved=saved,history=history,splits=split_table,conf=conf,run_dir=run_dir)
-        check_pair(pair)
+        for method in args.methods:
+            run_dir,saved,history,split_table,conf,checkpoint_path=read_run(root,runs_dir,dataset,method,checkpoints_dir)
+            pair[method]=dict(saved=saved,history=history,splits=split_table,conf=conf,run_dir=run_dir,checkpoint_path=checkpoint_path)
+        if set(pair) == {'baseline','label_smoothing'}:
+            check_pair(pair)
         for method,record in pair.items():
             run_dir,saved,conf=record['run_dir'],record['saved'],record['conf']
             original_path=run_dir/'test_predictions.csv'
@@ -192,10 +203,11 @@ def main(argv=None):
             recorded_path=run_dir/'test_metrics.json'
             if recorded_path.exists():
                 recorded=json.loads(recorded_path.read_text())
-                if recorded['signature']!=saved['signature']:
+                if 'signature' in recorded and recorded['signature']!=saved['signature']:
                     raise ValueError('Saved test metrics and checkpoint signatures differ.')
+                recorded_metrics = recorded.get('metrics', recorded)
                 for key,value in metrics.items():
-                    np.testing.assert_allclose(value,recorded['metrics'][key],rtol=2e-5,atol=1e-5)
+                    np.testing.assert_allclose(value,recorded_metrics[key],rtol=2e-5,atol=1e-5)
             target=output/f'{dataset}_{method}'
             target.mkdir(exist_ok=True)
             predictions.to_csv(target/'test_predictions.csv',index=False)
@@ -212,8 +224,8 @@ def main(argv=None):
                                       recall=float(recall[cls]),f1=float(f1[cls]),support=int(support[cls])))
             record['predictions']=predictions
             records[(dataset,method)]=record
-            provenance.append(dict(dataset=dataset,method=method,mode=mode,source_checkpoint=str(run_dir/'best.pt'),
-                source_checkpoint_sha256=sha256_file(run_dir/'best.pt'),training_signature=saved['signature'],
+            provenance.append(dict(dataset=dataset,method=method,mode=mode,source_checkpoint=str(record['checkpoint_path']),
+                source_checkpoint_sha256=sha256_file(record['checkpoint_path']),training_signature=saved['signature'],
                 legacy_notebook_checkpoint=('method' not in saved),label_smoothing=epsilon,
                 saved_prediction_max_abs_difference=maximum_difference,
                 test_count=len(predictions),selected_epoch=int(saved['best_epoch'])+1,epochs_completed=int(saved['epochs_completed'])))
@@ -224,11 +236,12 @@ def main(argv=None):
     pd.DataFrame(per_class).to_csv(output/'extension_per_class_metrics.csv',index=False)
     differences=[]
     indexed=comparison.set_index(['dataset','method'])
-    for dataset in args.datasets:
-        left,right=indexed.loc[(dataset,'baseline')],indexed.loc[(dataset,'label_smoothing')]
-        differences.append(dict(dataset=dataset,**{key:float(right[key]-left[key]) for key in ('auc','f1','acc','loss','brier','ece')}))
-    pd.DataFrame(differences).to_csv(output/'extension_deltas.csv',index=False)
-    plots(output,records,args.datasets)
+    if {'baseline','label_smoothing'} <= set(args.methods):
+        for dataset in args.datasets:
+            left,right=indexed.loc[(dataset,'baseline')],indexed.loc[(dataset,'label_smoothing')]
+            differences.append(dict(dataset=dataset,**{key:float(right[key]-left[key]) for key in ('auc','f1','acc','loss','brier','ece')}))
+    pd.DataFrame(differences,columns=['dataset','auc','f1','acc','loss','brier','ece']).to_csv(output/'extension_deltas.csv',index=False)
+    plots(output,records,args.datasets,args.methods)
     payload=dict(protocol='Fixed checkpoints selected by validation AUROC + F1; no test-based tuning.',
                  ece_bins=15,brier_definition='Mean over slides of sum over classes of squared probability error.',
                  torch_version=str(torch.__version__),device=str(device),

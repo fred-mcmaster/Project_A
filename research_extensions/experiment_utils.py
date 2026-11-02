@@ -1,7 +1,9 @@
 """Configuration, split recording, checkpoint selection, and reproducibility."""
 import hashlib
+import importlib.metadata
 import json
 from pathlib import Path
+import platform
 import h5py
 import pandas as pd
 import torch
@@ -49,7 +51,26 @@ def prepare_dataset(root, dataset, seed=None):
     return conf, datasets
 
 def config_from_checkpoint(checkpoint, root):
-    return resolve_conf_paths(Struct(**checkpoint['config']), root)
+    # Keep the trained architecture/protocol, but use this checkout's data paths.
+    # This also relocates fresh CLI checkpoints that stored absolute paths.
+    conf = Struct(**checkpoint['config'])
+    dataset = next(key for key, name in DATASET_NAMES.items() if name == conf.dataset)
+    current = load_config(Path(root) / 'config' / CONFIG_FILES[dataset])
+    for name in ('data_dir', 'dataset_csv_dir', 'camelyon17_csv', 'bracs_csv'):
+        conf.__dict__.pop(name, None)
+        if hasattr(current, name):
+            setattr(conf, name, getattr(current, name))
+    return resolve_conf_paths(conf, root)
+
+
+def environment_info(device):
+    packages = ('torch', 'torchmetrics', 'h5py', 'numpy', 'pandas', 'scikit-learn',
+                'PyYAML', 'matplotlib', 'requests')
+    return dict(python=platform.python_version(), platform=platform.platform(),
+                packages={name: importlib.metadata.version(name) for name in packages},
+                device=str(device), cuda=torch.version.cuda,
+                cudnn=torch.backends.cudnn.version(),
+                gpu=torch.cuda.get_device_name(device) if torch.device(device).type == 'cuda' else None)
 
 def split_records(conf, datasets):
     groups = [set(ds.data_names) for ds in datasets]
@@ -92,6 +113,13 @@ def experiment_manifest(conf, datasets, method, epsilon, epochs, device):
                     feature_size=feature.stat().st_size, feature_mtime_ns=feature.stat().st_mtime_ns,
                     splits={name:list(ds.data_names) for name,ds in zip(SPLIT_NAMES,datasets)},
                     code_sha256={name:sha256_file(module_dir/name) for name in code_files})
+    root = module_dir.parent
+    metadata['shared_code_sha256'] = {name: sha256_file(root / name) for name in ('dataloader.py', 'utils.py')}
+    metadata['environment'] = environment_info(device)
+    metadata['metadata_sha256'] = {
+        name: sha256_file(path) for name in ('camelyon17.csv', 'bracs.csv')
+        if (path := Path(getattr(conf, name[:-4] + '_csv', Path(conf.dataset_csv_dir) / name))).is_file()
+    }
     metadata['signature'] = hashlib.sha256(json.dumps(metadata,sort_keys=True).encode()).hexdigest()
     return metadata
 
