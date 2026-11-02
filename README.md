@@ -2,7 +2,7 @@
 
 This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. Its objectives are to implement a complete PyTorch training/evaluation pipeline and test whether **uniform label smoothing (epsilon = 0.1)** improves classification and probability calibration compared with ordinary cross-entropy.
 
-The implemented comparison covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: two methods per dataset, **30 epochs per run, seed 42**. The accompanying [baseline report](ECE1512_ProjectA_Baseline_Evaluation_Report.docx) and [extension report](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) report these six experiments. Diverse two-head attention is a proposal only. The image encoder is fixed; these experiments train the MIL aggregator and classifier, not a feature extractor.
+The implemented comparison covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: two methods per dataset, **30 epochs per run, seed 42**. The accompanying [baseline summary](<ECE1512 ProjectA Baseline Evaluation Summary.docx>) and [extension report](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) report these six experiments. The baseline summary also includes all nine notebook report questions and answers. Diverse two-head attention is a proposal only. The image encoder is fixed; these experiments train the MIL aggregator and classifier, not a feature extractor.
 
 ## 1. What is included
 
