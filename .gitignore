@@ -22,8 +22,12 @@ results/
 !checkpoints/C17_baseline/best.pt
 !checkpoints/BRACS_baseline/best.pt
 
+# Selected checkpoints from the completed matched top-k comparison.
+!checkpoints/top_k_128_full/*/best.pt
+
 # Local caches and partial downloads.
 *.part
 *.tmp
 .pytest_cache/
 
+data_manifest.json

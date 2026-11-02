@@ -1,8 +1,8 @@
 # ECE1512 Project A: reproducible ABMIL experiments
 
-This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. It provides a reproducible PyTorch baseline and selects **top-k attention pooling** as the next research extension to implement.
+This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. It provides a reproducible PyTorch baseline and implements **top-k attention pooling** as the selected research extension.
 
-The completed baseline covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: **30 epochs per dataset, seed 42**. The [baseline summary](<ECE1512 ProjectA Baseline Evaluation Summary.docx>) includes measured results and the nine notebook report questions and answers. The [research proposal](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) describes selected top-k attention pooling and the alternative diversity-regularized two-head idea. Both extensions are pending implementation and evaluation. The image encoder is fixed; training updates the MIL aggregator and classifier.
+The completed baseline covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: **30 epochs per dataset, seed 42**. The [baseline summary](<ECE1512 ProjectA Baseline Evaluation Summary.docx>) includes measured results and the nine notebook report questions and answers. The [research proposal](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) describes selected top-k attention pooling and the alternative diversity-regularized two-head idea. The full paired 30-epoch baseline/top-k comparison is complete on all three datasets. The report includes measured results and discussion. The second idea remains tentative. The image encoder is fixed; training updates the MIL aggregator and classifier.
 
 ## 1. What is included
 
@@ -12,6 +12,7 @@ The completed baseline covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: **3
 | Optional notebook/WSI dependencies | [`requirements-notebook.txt`](requirements-notebook.txt) |
 | Training CLI and shared model/engine | [`research_extensions/`](research_extensions/) |
 | Evaluation CLI | [`research_extensions/evaluate_extension.py`](research_extensions/evaluate_extension.py) |
+| Six fresh paired checkpoints and manifests | [`checkpoints/top_k_128_full/`](checkpoints/top_k_128_full/) |
 | Three original validation-selected baseline checkpoints (~2 MB total) | [`checkpoints/`](checkpoints/), included directly in Git |
 | Checkpoint hashes and original compute environment | [`checkpoints/manifest.json`](checkpoints/manifest.json), [`checkpoints/environment.json`](checkpoints/environment.json) |
 | Per-slide test probabilities, histories, ordered splits, metrics, figures | [`research_extensions/evaluation_results/`](research_extensions/evaluation_results/) |
@@ -124,26 +125,26 @@ python -m research_extensions.evaluate_extension --recompute --device cuda
 
 Use `--device cpu` if needed. Outputs go to `results/pretrained_evaluation/`, preserving the versioned reference artifacts. The evaluator verifies ordered test IDs/labels and compares recomputed probabilities with the saved predictions (`rtol=2e-5`, `atol=2e-6`). It also independently recomputes the metrics (`rtol=2e-5`, `atol=1e-5`). `evaluation_provenance.json` records actual checkpoint hashes, execution mode, device, and prediction differences.
 
-## 5. Train and evaluate the baselines
+## 5. Train and evaluate baseline versus top-k pooling
 
 After dataset verification, run:
 
 ```bash
-python -m research_extensions.train_extension --epochs 30 --seed 42 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_evaluation
+python -m research_extensions.train_extension --methods baseline top_k --top-k 128 --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
+python -m research_extensions.evaluate_extension --methods baseline top_k --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_evaluation
 ```
 
-The first command trains all three baseline experiments and selects checkpoints using **validation macro-AUROC + macro-F1**, keeping the earliest epoch on a tie. It never evaluates the test split. The second command performs final test inference on those selected checkpoints. Each run resets model initialization and the independent training-sampler seed.
+The first command trains six runs: baseline and top-k pooling on each of the three datasets and selects checkpoints using **validation macro-AUROC + macro-F1**, keeping the earliest epoch on a tie. It never evaluates the test split. The second command performs final test inference on those selected checkpoints. Both methods start from identical model weights and training-sampler order. The exploratory setting is an absolute `k=128` patches per slide; it is not a validated optimum. Use `--methods baseline` to run only the baseline.
 
-Training writes `<dataset>_<method>/best.pt`, `history.csv`, `manifest.json`, and `<dataset>/splits.csv`. Evaluation writes `extension_comparison.csv`, per-class metrics, calibration/confusion figures, and per-run test probabilities/metrics. Checkpoints include model weights, selected epoch, completed epoch count, configuration, training signature, and history.
+Training writes `<dataset>_<method>/best.pt`, `history.csv`, `manifest.json`, and `<dataset>/splits.csv`. Evaluation writes `extension_comparison.csv`, `extension_deltas.csv` (top-k minus baseline), per-class metrics, calibration/confusion figures, and per-run test probabilities/metrics. Checkpoints include model weights, selected epoch, completed epoch count, configuration including pooling mode and k, training signature, and history. Evaluation restores k from the checkpoint; it does not accept an inference-time override.
 
 Completed experiments with matching signatures are reused. To force a fresh run, choose a new training output directory and pass that same directory as evaluation's `--runs-dir`, or explicitly use `--overwrite`. A changed code/configuration signature requires a new directory or `--overwrite`. These local cache signatures include feature file timestamps and paths; they are not intended to match across machines. Checkpoint hashes identify the original supplied models.
 
 For a short pipeline check (not a reported result):
 
 ```bash
-python -m research_extensions.train_extension --datasets C16 --epochs 1 --device cuda --output-dir results/smoke
-python -m research_extensions.evaluate_extension --datasets C16 --runs-dir results/smoke --recompute --device cuda --output-dir results/smoke_evaluation
+python -m research_extensions.train_extension --datasets C16 --methods baseline top_k --top-k 128 --epochs 1 --device cuda --output-dir results/smoke
+python -m research_extensions.evaluate_extension --datasets C16 --methods baseline top_k --runs-dir results/smoke --recompute --device cuda --output-dir results/smoke_evaluation
 ```
 
 ## 6. Hyperparameters and experiment configuration
@@ -152,7 +153,7 @@ python -m research_extensions.evaluate_extension --datasets C16 --runs-dir resul
 |---|---|
 | Features | Fixed medical-SSL features, 384 dimensions; every patch in each bag |
 | Projection | Linear(384, 256), ReLU |
-| Attention | One gated head: tanh and sigmoid branches, 256 -> 128 -> scalar, masked patch softmax |
+| Attention | Same gated scorer; baseline softmax over all valid patches, top-k softmax over at most 128 |
 | Classifier | Linear(256, C); C = 2 / 4 / 7 for C16 / C17 / BRACS |
 | Dropout | 0.0 |
 | Training objective | Ordinary hard-target cross-entropy |
@@ -165,7 +166,7 @@ python -m research_extensions.evaluate_extension --datasets C16 --runs-dir resul
 | Model selection | Maximum validation macro-AUROC + macro-F1, earliest tie |
 | Validation/test loss | Ordinary hard-target cross-entropy |
 
-Dataset-specific values live in `config/*.yml`; datasets, methods, epochs, and seed also live in `research_extensions/experiment_config.json`. Currently only `baseline` is implemented. CLI flags override the experiment JSON; the CLI infers feature dimension from the HDF5 file. `warmup_epoch` and `n_res` are inherited starter fields and are **unused**.
+Dataset-specific values live in `config/*.yml`; datasets, methods, top-k count, epochs, and seed also live in `research_extensions/experiment_config.json`. Implemented methods are `baseline` and `top_k`; the default training configuration includes both, with `top_k: 128`. Evaluation defaults to the three bundled baselines; pass `--methods baseline top_k` and a fresh `--runs-dir` for paired results. CLI flags override the experiment JSON; the CLI infers feature dimension from the HDF5 file. `warmup_epoch` and `n_res` are inherited starter fields and are **unused**.
 
 ## 7. Results and exact commands for every row
 
@@ -183,24 +184,24 @@ For each row below: the **first command** reproduces the reported checkpoint's i
 
 ```bash
 python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --recompute --device cuda --output-dir results/pretrained_R1
-python -m research_extensions.train_extension --datasets C16 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R1
+python -m research_extensions.train_extension --datasets C16 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
+python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_R1
 ```
 
 ### R2: C17 baseline
 
 ```bash
 python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --recompute --device cuda --output-dir results/pretrained_R2
-python -m research_extensions.train_extension --datasets C17 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R2
+python -m research_extensions.train_extension --datasets C17 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
+python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_R2
 ```
 
 ### R3: BRACS baseline
 
 ```bash
 python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --recompute --device cuda --output-dir results/pretrained_R3
-python -m research_extensions.train_extension --datasets BRACS --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R3
+python -m research_extensions.train_extension --datasets BRACS --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
+python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_R3
 ```
 
 The supplied checkpoints and saved probabilities support checking the reported values to the displayed precision. Fresh retraining can differ across hardware, drivers, or dependency builds despite fixed seeds; bitwise-identical training across platforms is not guaranteed. These are **single-seed** comparisons, with no confidence intervals or claim of statistical significance.
@@ -211,7 +212,36 @@ Keep the gated patch scorer, projection, classifier, and ordinary cross-entropy.
 
 The hypothesis is that concentrating on the most informative patches can reduce background dilution. A small k may discard distributed tissue evidence, so improvement is an experimental question. Define the candidate k values before extension experiments and select k using validation only. Preserve the baseline features, splits, optimizer, epoch budget, initialization, sampler seed, and validation checkpoint rule. Report macro-AUROC, macro-F1, accuracy, per-class recall, and probability quality on all three datasets. Top-k pooling still scores every patch; reduced feature extraction cost is not assumed.
 
-**Status:** selected for implementation; no top-k code, checkpoints, or measured results are included yet. Diversity-regularized two-head attention remains the second proposal.
+**Status:** implemented and covered by correctness and pipeline checks. The full 30-epoch paired comparison is complete; the section below provides the measured outcomes and links the discussion. The original baseline-only table above is retained for reference. Change k with `--top-k` and use a separate output directory for each candidate. Select k using validation only before final test evaluation. A complementary-head idea remains tentative; its exact design is not finalized. Exact ties at the selection cutoff follow `torch.topk` ordering and may differ across devices or patch permutations. With `k=1`, softmax supplies zero gradient to the attention scores; larger k values permit attention-score learning.
+
+## Completed comparison: baseline versus top-k
+
+Both methods completed **30 epochs on C16, C17, and BRACS**, with seed 42 and a fixed absolute **k=128**. Checkpoints use validation macro-AUROC + macro-F1 with earliest ties. The values below are from the fresh paired runs, not the one-epoch checks.
+
+| Dataset | Method | Epoch | Accuracy (%) | Macro-AUROC | Macro-F1 |
+| --- | --- | --- | --- | --- | --- |
+| C16 | Baseline | 3 | 88.37 | 0.9342 | 0.8668 |
+| C16 | Top-k 128 | 3 | 96.12 | 0.9842 | 0.9580 |
+| C17 | Baseline | 22 | 78.50 | 0.8243 | 0.5339 |
+| C17 | Top-k 128 | 5 | 81.50 | 0.8440 | 0.4952 |
+| BRACS | Baseline | 6 | 39.53 | 0.8043 | 0.3494 |
+| BRACS | Top-k 128 | 7 | 47.67 | 0.7962 | 0.3985 |
+
+- **C16:** top-k minus baseline AUROC +0.0500, macro-F1 +0.0912, accuracy +7.75 percentage points, and NLL -0.1007.
+- **C17:** top-k minus baseline AUROC +0.0197, macro-F1 -0.0386, accuracy +3.00 percentage points, and NLL -0.1704.
+- **BRACS:** top-k minus baseline AUROC -0.0081, macro-F1 +0.0490, accuracy +8.14 percentage points, and NLL -0.0199.
+
+These are single-seed observations at one exploratory k. Lower NLL is better; classification and calibration can change differently. Detailed class-level findings, interpretations, probability-quality metrics, and limitations are in the [observed-results discussion](research_extensions/evaluation_results/top_k_128_full/observed_results.md) and the [Word report](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx).
+
+All six selected checkpoints and training manifests are in `checkpoints/top_k_128_full/`; saved test probabilities, histories, splits, metrics, and figures are in `research_extensions/evaluation_results/top_k_128_full/`. Original baseline artifacts are preserved.
+
+Verify the packaged comparison without downloading features:
+
+```bash
+python -m research_extensions.evaluate_extension --methods baseline top_k --runs-dir research_extensions/evaluation_results/top_k_128_full --checkpoints-dir checkpoints/top_k_128_full --device cpu --output-dir results/top_k_128_verified
+```
+
+To repeat inference, add `--recompute` and use `--device cuda` after downloading the features.
 
 ## 8. Validation and optional notebook/WSI workflow
 
@@ -219,7 +249,7 @@ The hypothesis is that concentrating on the most informative patches can reduce 
 python -m unittest discover -s research_extensions/tests -v
 ```
 
-The suite checks baseline outputs against the notebook on unpadded bags, padding and permutation behavior, controlled learning, reproducible seeds/order, validation-only selection, known probability metrics, checkpoint relocation, and the bundled results. Real-feature forward/backward integration checks run when all features are present; otherwise that test is explicitly skipped. Saved-artifact tests run without feature downloads.
+The suite checks baseline outputs against the notebook on unpadded bags, padding and permutation behavior, top-k selection/renormalization and gradients, all-patch equivalence, controlled learning, paired seeds/order, validation-only selection, known probability metrics, checkpoint relocation, saved k and cache invalidation, end-to-end paired evaluation, and the bundled results. Real-feature forward/backward integration checks run when all features are present; otherwise that test is explicitly skipped. Saved-artifact tests run without feature downloads.
 
 For the educational notebook and optional raw-WSI attention overlays:
 
