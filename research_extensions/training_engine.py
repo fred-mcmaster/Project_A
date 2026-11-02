@@ -1,8 +1,4 @@
-"""Shared baseline/extension training and hard-target evaluation routines.
-
-Only the training loss differs between methods. Core functions are copied from
-the completed notebook to preserve the experimental protocol.
-"""
+"""Shared ABMIL training and hard-target evaluation routines."""
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F

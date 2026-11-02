@@ -24,12 +24,10 @@ def load_settings(path):
     settings = json.loads(Path(path).read_text(encoding='utf-8'))
     if not settings['datasets'] or not set(settings['datasets']) <= set(CONFIG_FILES):
         raise ValueError('datasets must be a nonempty subset of C16, C17, BRACS.')
-    if not settings['methods'] or not set(settings['methods']) <= {'baseline','label_smoothing'}:
-        raise ValueError('methods must be baseline and/or label_smoothing.')
+    if settings['methods'] != ['baseline']:
+        raise ValueError('Only the baseline method is currently implemented.')
     if len(set(settings['datasets'])) != len(settings['datasets']) or len(set(settings['methods'])) != len(settings['methods']):
         raise ValueError('Duplicate datasets/methods are not allowed.')
-    if not 0 <= float(settings['label_smoothing']) <= 1:
-        raise ValueError('label_smoothing must be between 0 and 1.')
     if int(settings['epochs']) <= 0:
         raise ValueError('epochs must be positive.')
     return settings
@@ -101,13 +99,12 @@ def sha256_file(path):
             digest.update(chunk)
     return digest.hexdigest()
 
-def experiment_manifest(conf, datasets, method, epsilon, epochs, device):
+def experiment_manifest(conf, datasets, method, epochs, device):
     feature = Path(conf.data_dir)
     module_dir = Path(__file__).resolve().parent
-    code_files = ('abmil_model.py','training_engine.py','label_smoothing_loss.py',
+    code_files = ('abmil_model.py','training_engine.py',
                   'experiment_utils.py','train_extension.py')
     metadata = dict(config=vars(conf).copy(), method=method,
-                    label_smoothing=0.0 if method == 'baseline' else float(epsilon),
                     epochs=int(epochs), device=str(device), torch_version=str(torch.__version__),
                     selection='validation macro-AUROC + macro-F1; earliest tie',
                     feature_size=feature.stat().st_size, feature_mtime_ns=feature.stat().st_mtime_ns,

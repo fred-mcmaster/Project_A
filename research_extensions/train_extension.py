@@ -1,4 +1,4 @@
-﻿"""Train the baseline and selected label-smoothing extension on identical splits.
+"""Train the ABMIL baseline with validation-only checkpoint selection.
 
 Run from the project folder:
     python -m research_extensions.train_extension
@@ -20,7 +20,6 @@ import torch
 from utils import seed_everything
 from research_extensions.abmil_model import ABMIL
 from research_extensions.training_engine import make_loaders, train_one_epoch, evaluate
-from research_extensions.label_smoothing_loss import make_training_loss, make_evaluation_loss
 from research_extensions.experiment_utils import (
     CONFIG_FILES, load_settings, resolve_path, prepare_dataset, split_records,
     experiment_manifest, save_checkpoint,
@@ -40,7 +39,7 @@ def fit(model, training_loss, optimizer, train_loader, val_loader, conf, epochs,
     (run_dir / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     best_score, best_epoch, best_state = float('-inf'), -1, None
     history = []
-    eval_loss = make_evaluation_loss()
+    eval_loss = torch.nn.CrossEntropyLoss()
     for epoch in range(epochs):
         started = time.monotonic()
         train_metrics = train_one_epoch(model, training_loss, train_loader, optimizer, device)
@@ -62,8 +61,7 @@ def fit(model, training_loss, optimizer, train_loader, val_loader, conf, epochs,
         raise ValueError('At least one epoch is required.')
     payload = dict(model_state=best_state, best_epoch=best_epoch, best_score=best_score,
                    epochs_completed=epochs, history=history, config=vars(conf),
-                   signature=manifest['signature'], method=manifest['method'],
-                   label_smoothing=manifest['label_smoothing'])
+                   signature=manifest['signature'], method=manifest['method'])
     save_checkpoint(checkpoint_path, payload)
     return payload
 
@@ -74,20 +72,17 @@ def main(argv=None):
     parser.add_argument('--config', type=Path, default=Path(__file__).with_name('experiment_config.json'))
     parser.add_argument('--output-dir', type=Path, default=Path('results/research_extension_runs'))
     parser.add_argument('--datasets', nargs='+', choices=list(CONFIG_FILES))
-    parser.add_argument('--methods', nargs='+', choices=['baseline','label_smoothing'])
+    parser.add_argument('--methods', nargs='+', choices=['baseline'])
     parser.add_argument('--epochs', type=int)
     parser.add_argument('--seed', type=int)
-    parser.add_argument('--epsilon', type=float)
     parser.add_argument('--device', choices=['auto','cpu','cuda'], default='auto')
     parser.add_argument('--overwrite', action='store_true', help='Replace a generated run with changed settings.')
     args = parser.parse_args(argv)
     settings = load_settings(args.config)
     epochs = args.epochs if args.epochs is not None else int(settings['epochs'])
     seed = args.seed if args.seed is not None else int(settings['seed'])
-    epsilon = args.epsilon if args.epsilon is not None else float(settings['label_smoothing'])
     if epochs <= 0:
         parser.error('--epochs must be positive.')
-    make_training_loss('label_smoothing', epsilon)
     datasets_to_run = args.datasets or settings['datasets']
     methods = args.methods or settings['methods']
     root = args.project_dir.resolve()
@@ -102,13 +97,13 @@ def main(argv=None):
         conf.train_epoch = epochs
         table = split_records(conf, datasets)
         for method in methods:
-            manifest = experiment_manifest(conf, datasets, method, epsilon, epochs, device)
-            # Same model seed and independent sampler seed for both objectives.
+            manifest = experiment_manifest(conf, datasets, method, epochs, device)
+            # Reset model initialization and the independent sampler seed per run.
             seed_everything(seed)
             loaders = make_loaders(*datasets, conf)
             model = ABMIL(conf).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(conf.lr), weight_decay=float(conf.wd))
-            fit(model, make_training_loss(method, epsilon), optimizer, loaders[0], loaders[1],
+            fit(model, torch.nn.CrossEntropyLoss(), optimizer, loaders[0], loaders[1],
                 conf, epochs, device, output / f'{dataset}_{method}', manifest, args.overwrite)
             del model, optimizer, loaders
         split_dir = output / dataset

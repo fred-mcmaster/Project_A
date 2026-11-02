@@ -1,1 +1,1 @@
-"""Standalone ABMIL label-smoothing research extension for ECE1512 Project A."""
+"""Reproducible ABMIL baseline and infrastructure for research extensions."""

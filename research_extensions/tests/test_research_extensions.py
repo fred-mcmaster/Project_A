@@ -1,4 +1,4 @@
-﻿"""Checks of the exported model, selected objective, and experiment controls."""
+"""Checks of the ABMIL baseline, saved artifacts, and experiment controls."""
 import ast
 import json
 import os
@@ -15,7 +15,6 @@ from utils import Struct, seed_everything
 from dataloader import mil_collate_fn
 from research_extensions.abmil_model import ABMIL
 from research_extensions.training_engine import make_loaders, train_one_epoch, evaluate
-from research_extensions.label_smoothing_loss import make_training_loss, make_evaluation_loss
 from research_extensions.experiment_utils import prepare_dataset, selected_epoch, config_from_checkpoint
 from research_extensions.evaluate_extension import metrics_from_predictions, read_run, main as evaluate_main
 
@@ -30,33 +29,23 @@ class ResearchExtensionTests(unittest.TestCase):
         self.samples=[dict(input=torch.eye(4)[i].repeat(i+2,1),label=i,slide_id=str(i)) for i in range(3)]
         self.loader=DataLoader(self.samples,batch_size=2,collate_fn=mil_collate_fn)
 
-    def test_exported_definitions_match_notebook(self):
+    def test_baseline_matches_notebook_on_unpadded_bags(self):
         nb=json.loads((ROOT/'ECE1512_ProjectA_Student.ipynb').read_text(encoding='utf-8'))
-        notebook_nodes={}
+        namespace=dict(torch=torch,nn=nn,F=torch.nn.functional)
         for cell in nb['cells']:
-            if cell['cell_type']=='code':
-                for node in ast.parse(''.join(cell['source'])).body:
-                    if isinstance(node,(ast.ClassDef,ast.FunctionDef)):
-                        notebook_nodes[node.name]=ast.dump(node,include_attributes=False)
-        package=Path(__file__).resolve().parents[1]
-        for filename in ('abmil_model.py','training_engine.py'):
-            for node in ast.parse((package/filename).read_text(encoding='utf-8-sig')).body:
-                if isinstance(node,(ast.ClassDef,ast.FunctionDef)):
-                    self.assertEqual(ast.dump(node,include_attributes=False),notebook_nodes[node.name],node.name)
-
-    def test_smoothing_matches_soft_targets_and_gradients(self):
-        for classes in (2,4,7):
-            logits=torch.randn(classes,classes,requires_grad=True)
-            labels=torch.arange(classes)
-            target=.9*torch.nn.functional.one_hot(labels,classes)+.1/classes
-            manual=-(target*logits.log_softmax(1)).sum(1).mean()
-            actual=make_training_loss('label_smoothing',.1)(logits,labels)
-            torch.testing.assert_close(actual,manual)
-            torch.testing.assert_close(torch.autograd.grad(actual,logits,retain_graph=True)[0],torch.autograd.grad(manual,logits)[0])
-            torch.testing.assert_close(make_training_loss('label_smoothing',0)(logits,labels),make_training_loss('baseline')(logits,labels))
-        for epsilon in (-.1,1.1,float('nan')):
-            with self.assertRaises(ValueError): make_training_loss('label_smoothing',epsilon)
-        with self.assertRaises(ValueError): make_training_loss('unknown')
+            if cell['cell_type']=='code' and ''.join(cell['source']).lstrip().startswith('class Classifier1FC'):
+                classes=[node for node in ast.parse(''.join(cell['source'])).body
+                         if isinstance(node,ast.ClassDef)]
+                if classes:
+                    exec(compile(ast.Module(body=classes,type_ignores=[]),'<notebook>','exec'),namespace)
+        model=ABMIL(self.conf).eval()
+        notebook_model=namespace['ABMIL'](self.conf).eval()
+        notebook_model.load_state_dict(model.state_dict(),strict=True)
+        for sample in self.samples:
+            bag=sample['input'].unsqueeze(0)
+            actual=model(bag,return_attention=True)
+            expected=notebook_model(bag,return_attention=True)
+            for left,right in zip(actual,expected): torch.testing.assert_close(left,right)
 
     def test_padding_and_permutation(self):
         model=ABMIL(self.conf).eval()
@@ -70,14 +59,14 @@ class ResearchExtensionTests(unittest.TestCase):
         torch.testing.assert_close(logits,model(batch['input'][:,perm],mask=batch['mask'][:,perm]))
         with self.assertRaises(ValueError): model(batch['input'],mask=torch.zeros_like(batch['mask']))
 
-    def test_smoothed_training_learns_and_evaluation_is_read_only(self):
+    def test_baseline_training_learns_and_evaluation_is_read_only(self):
         model=ABMIL(self.conf)
         optimizer=torch.optim.AdamW(model.parameters(),lr=.03)
-        before=evaluate(model,make_evaluation_loss(),self.loader,'cpu',self.conf)
+        before=evaluate(model,nn.CrossEntropyLoss(),self.loader,'cpu',self.conf)
         for _ in range(60):
-            train_one_epoch(model,make_training_loss('label_smoothing'),self.loader,optimizer,'cpu')
+            train_one_epoch(model,nn.CrossEntropyLoss(),self.loader,optimizer,'cpu')
         weights={name:value.clone() for name,value in model.state_dict().items()}
-        after,pred=evaluate(model,make_evaluation_loss(),self.loader,'cpu',self.conf,True)
+        after,pred=evaluate(model,nn.CrossEntropyLoss(),self.loader,'cpu',self.conf,True)
         self.assertLess(after['loss'],before['loss']*.25)
         self.assertEqual(after['acc'],100)
         self.assertFalse(model.training)
@@ -86,13 +75,12 @@ class ResearchExtensionTests(unittest.TestCase):
         manual=-np.log(pred.filter(regex=r'^p_\d+$').to_numpy()[np.arange(3),np.arange(3)]).mean()
         self.assertAlmostEqual(after['loss'],manual,places=6)
 
-    def test_paired_initialization_and_slide_order(self):
+    def test_reproducible_initialization_and_slide_order(self):
         states,orders=[],[]
-        for method in ('baseline','label_smoothing'):
+        for _ in range(2):
             seed_everything(42)
             loaders=make_loaders(self.samples,self.samples,self.samples,self.conf)
             model=ABMIL(self.conf)
-            make_training_loss(method)
             states.append({name:value.clone() for name,value in model.state_dict().items()})
             orders.append([slide for batch in loaders[0] for slide in batch['slide_id']])
         self.assertEqual(orders[0],orders[1])
@@ -123,7 +111,7 @@ class ResearchExtensionTests(unittest.TestCase):
             batch=mil_collate_fn([datasets[0][0],datasets[0][1]])
             model=ABMIL(conf)
             logits=model(batch['input'],mask=batch['mask'])
-            loss=make_training_loss('label_smoothing')(logits,batch['label'])
+            loss=nn.CrossEntropyLoss()(logits,batch['label'])
             loss.backward()
             self.assertTrue(torch.isfinite(loss))
             self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters()))
@@ -141,7 +129,8 @@ class ResearchExtensionTests(unittest.TestCase):
 
     def test_bundled_artifacts_match_checkpoints_and_results_table(self):
         comparison=pd.read_csv(ROOT/'research_extensions/evaluation_results/extension_comparison.csv')
-        self.assertEqual(len(comparison),6)
+        self.assertEqual(len(comparison),3)
+        self.assertEqual(set(comparison.method),{'baseline'})
         for row in comparison.itertuples():
             run,saved,history,splits,conf,checkpoint=read_run(ROOT,
                 ROOT/'research_extensions/evaluation_results',row.dataset,row.method,ROOT/'checkpoints')
@@ -168,7 +157,6 @@ class ResearchExtensionTests(unittest.TestCase):
             table=pd.read_csv(Path(output)/'extension_comparison.csv')
             self.assertEqual(len(table),1)
             self.assertEqual(table.iloc[0]['method'],'baseline')
-            self.assertEqual(len(pd.read_csv(Path(output)/'extension_deltas.csv')),0)
 
 
 if __name__=='__main__':

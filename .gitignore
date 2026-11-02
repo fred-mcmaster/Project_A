@@ -17,13 +17,10 @@ results/
 *.pt
 *.pth
 
-# The six small validation-selected checkpoints are part of the submission.
+# The three small validation-selected baseline checkpoints are part of the submission.
 !checkpoints/C16_baseline/best.pt
-!checkpoints/C16_label_smoothing/best.pt
 !checkpoints/C17_baseline/best.pt
-!checkpoints/C17_label_smoothing/best.pt
 !checkpoints/BRACS_baseline/best.pt
-!checkpoints/BRACS_label_smoothing/best.pt
 
 # Local caches and partial downloads.
 *.part

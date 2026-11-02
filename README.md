@@ -1,8 +1,8 @@
-﻿# ECE1512 Project A: reproducible ABMIL experiments
+# ECE1512 Project A: reproducible ABMIL experiments
 
-This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. Its objectives are to implement a complete PyTorch training/evaluation pipeline and test whether **uniform label smoothing (epsilon = 0.1)** improves classification and probability calibration compared with ordinary cross-entropy.
+This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. It provides a reproducible PyTorch baseline and selects **top-k attention pooling** as the next research extension to implement.
 
-The implemented comparison covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: two methods per dataset, **30 epochs per run, seed 42**. The accompanying [baseline summary](<ECE1512 ProjectA Baseline Evaluation Summary.docx>) and [extension report](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) report these six experiments. The baseline summary also includes all nine notebook report questions and answers. Diverse two-head attention is a proposal only. The image encoder is fixed; these experiments train the MIL aggregator and classifier, not a feature extractor.
+The completed baseline covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: **30 epochs per dataset, seed 42**. The [baseline summary](<ECE1512 ProjectA Baseline Evaluation Summary.docx>) includes measured results and the nine notebook report questions and answers. The [research proposal](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) describes selected top-k attention pooling and the alternative diversity-regularized two-head idea. Both extensions are pending implementation and evaluation. The image encoder is fixed; training updates the MIL aggregator and classifier.
 
 ## 1. What is included
 
@@ -12,7 +12,7 @@ The implemented comparison covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS:
 | Optional notebook/WSI dependencies | [`requirements-notebook.txt`](requirements-notebook.txt) |
 | Training CLI and shared model/engine | [`research_extensions/`](research_extensions/) |
 | Evaluation CLI | [`research_extensions/evaluate_extension.py`](research_extensions/evaluate_extension.py) |
-| All six original validation-selected checkpoints (~4 MB total) | [`checkpoints/`](checkpoints/), included directly in Git |
+| Three original validation-selected baseline checkpoints (~2 MB total) | [`checkpoints/`](checkpoints/), included directly in Git |
 | Checkpoint hashes and original compute environment | [`checkpoints/manifest.json`](checkpoints/manifest.json), [`checkpoints/environment.json`](checkpoints/environment.json) |
 | Per-slide test probabilities, histories, ordered splits, metrics, figures | [`research_extensions/evaluation_results/`](research_extensions/evaluation_results/) |
 | Dataset checksums and immutable download revision | [`data_manifest.json`](data_manifest.json) |
@@ -116,7 +116,7 @@ The following command reproduces all reported metrics from the **tracked test pr
 python scripts/verify_results.py --device cpu
 ```
 
-To actually run inference using all six bundled checkpoints, first download the features, then run:
+To actually run inference using all three bundled baseline checkpoints, first download the features, then run:
 
 ```bash
 python -m research_extensions.evaluate_extension --recompute --device cuda
@@ -124,18 +124,18 @@ python -m research_extensions.evaluate_extension --recompute --device cuda
 
 Use `--device cpu` if needed. Outputs go to `results/pretrained_evaluation/`, preserving the versioned reference artifacts. The evaluator verifies ordered test IDs/labels and compares recomputed probabilities with the saved predictions (`rtol=2e-5`, `atol=2e-6`). It also independently recomputes the metrics (`rtol=2e-5`, `atol=1e-5`). `evaluation_provenance.json` records actual checkpoint hashes, execution mode, device, and prediction differences.
 
-## 5. Train and evaluate all experiments
+## 5. Train and evaluate the baselines
 
 After dataset verification, run:
 
 ```bash
-python -m research_extensions.train_extension --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
+python -m research_extensions.train_extension --epochs 30 --seed 42 --device cuda --output-dir results/retrained
 python -m research_extensions.evaluate_extension --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_evaluation
 ```
 
-The first command trains all six experiments and selects checkpoints using **validation macro-AUROC + macro-F1**, keeping the earliest epoch on a tie. It never evaluates the test split. The second command performs final test inference on those selected checkpoints. Each method resets both model initialization and the independent training-sampler seed.
+The first command trains all three baseline experiments and selects checkpoints using **validation macro-AUROC + macro-F1**, keeping the earliest epoch on a tie. It never evaluates the test split. The second command performs final test inference on those selected checkpoints. Each run resets model initialization and the independent training-sampler seed.
 
-Training writes `<dataset>_<method>/best.pt`, `history.csv`, `manifest.json`, and `<dataset>/splits.csv`. Evaluation writes `extension_comparison.csv`, `extension_deltas.csv`, per-class metrics, calibration/confusion figures, and per-run test probabilities/metrics. Checkpoints include model weights, selected epoch, completed epoch count, configuration, training signature, and history.
+Training writes `<dataset>_<method>/best.pt`, `history.csv`, `manifest.json`, and `<dataset>/splits.csv`. Evaluation writes `extension_comparison.csv`, per-class metrics, calibration/confusion figures, and per-run test probabilities/metrics. Checkpoints include model weights, selected epoch, completed epoch count, configuration, training signature, and history.
 
 Completed experiments with matching signatures are reused. To force a fresh run, choose a new training output directory and pass that same directory as evaluation's `--runs-dir`, or explicitly use `--overwrite`. A changed code/configuration signature requires a new directory or `--overwrite`. These local cache signatures include feature file timestamps and paths; they are not intended to match across machines. Checkpoint hashes identify the original supplied models.
 
@@ -155,7 +155,7 @@ python -m research_extensions.evaluate_extension --datasets C16 --runs-dir resul
 | Attention | One gated head: tanh and sigmoid branches, 256 -> 128 -> scalar, masked patch softmax |
 | Classifier | Linear(256, C); C = 2 / 4 / 7 for C16 / C17 / BRACS |
 | Dropout | 0.0 |
-| Training objective | Baseline: ordinary CE; extension: CE with uniform label smoothing epsilon = 0.1 |
+| Training objective | Ordinary hard-target cross-entropy |
 | Optimizer | AdamW; learning rate = 0.0001; weight decay = 0.00001; default betas = (0.9, 0.999), eps = 1e-8 |
 | Schedule | Constant learning rate; no warm-up, scheduler, early stopping, or augmentation |
 | Epochs / batch size | 30 / 1 slide |
@@ -163,22 +163,19 @@ python -m research_extensions.evaluate_extension --datasets C16 --runs-dir resul
 | Seed | 42 for Python, NumPy, PyTorch, and the training sampler |
 | Data loading | 0 workers; training shuffled, validation/test ordered; CPU threads capped at 4 |
 | Model selection | Maximum validation macro-AUROC + macro-F1, earliest tie |
-| Validation/test loss | Ordinary hard-target cross-entropy for both methods |
+| Validation/test loss | Ordinary hard-target cross-entropy |
 
-Dataset-specific values live in `config/*.yml`; datasets, methods, epochs, seed, and epsilon also live in `research_extensions/experiment_config.json`. CLI flags override the experiment JSON; the CLI infers feature dimension from the HDF5 file. `warmup_epoch` and `n_res` are inherited starter fields and are **unused**. Label smoothing uses `q = (1-epsilon) * one_hot(y) + epsilon/C`.
+Dataset-specific values live in `config/*.yml`; datasets, methods, epochs, and seed also live in `research_extensions/experiment_config.json`. Currently only `baseline` is implemented. CLI flags override the experiment JSON; the CLI infers feature dimension from the HDF5 file. `warmup_epoch` and `n_res` are inherited starter fields and are **unused**.
 
 ## 7. Results and exact commands for every row
 
-These values match the supplied reports and [`extension_comparison.csv`](research_extensions/evaluation_results/extension_comparison.csv). All six runs completed 30 epochs; selected epochs below are **one-based**. AUROC is macro one-vs-rest (binary C16 equals positive-class AUROC); F1 is macro-F1. Accuracy is a percentage. NLL is mean hard-target CE, Brier is the mean sum of squared class-probability errors, and ECE uses 15 equal-width top-label confidence bins. Lower NLL/Brier/ECE is better.
+These baseline values match the baseline report and [`extension_comparison.csv`](research_extensions/evaluation_results/extension_comparison.csv). All three baseline runs completed 30 epochs; selected epochs below are **one-based**. AUROC is macro one-vs-rest (binary C16 equals positive-class AUROC); F1 is macro-F1. Accuracy is a percentage. NLL is mean hard-target CE, Brier is the mean sum of squared class-probability errors, and ECE uses 15 equal-width top-label confidence bins. Lower NLL/Brier/ECE is better.
 
 | Row | Dataset | Method | Selected epoch | Accuracy (%) | AUROC | Macro-F1 | NLL | Brier | ECE |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | [R1](#r1-c16-baseline) | C16 | Baseline CE | 3 | 88.37 | 0.9342 | 0.8668 | 0.2804 | 0.1628 | 0.0564 |
-| [R2](#r2-c16-label-smoothing) | C16 | Label smoothing | 3 | 88.37 | 0.9383 | 0.8668 | 0.3175 | 0.1791 | 0.1146 |
-| [R3](#r3-c17-baseline) | C17 | Baseline CE | 22 | 78.50 | 0.8243 | 0.5339 | 0.7347 | 0.3253 | 0.1148 |
-| [R4](#r4-c17-label-smoothing) | C17 | Label smoothing | 5 | 80.50 | 0.8464 | 0.4303 | 0.5466 | 0.2797 | 0.0561 |
-| [R5](#r5-bracs-baseline) | BRACS | Baseline CE | 6 | 39.53 | 0.8043 | 0.3494 | 1.4266 | 0.7183 | 0.2547 |
-| [R6](#r6-bracs-label-smoothing) | BRACS | Label smoothing | 6 | 39.53 | 0.7996 | 0.3534 | 1.4223 | 0.7029 | 0.2315 |
+| [R2](#r2-c17-baseline) | C17 | Baseline CE | 22 | 78.50 | 0.8243 | 0.5339 | 0.7347 | 0.3253 | 0.1148 |
+| [R3](#r3-bracs-baseline) | BRACS | Baseline CE | 6 | 39.53 | 0.8043 | 0.3494 | 1.4266 | 0.7183 | 0.2547 |
 
 For each row below: the **first command** reproduces the reported checkpoint's inference, and the **second and third commands** independently retrain and evaluate that row. Run these after setup/download. For verification without features, omit `--recompute` from the first command. For CPU execution, replace `--device cuda` with `--device cpu`.
 
@@ -190,47 +187,31 @@ python -m research_extensions.train_extension --datasets C16 --methods baseline 
 python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R1
 ```
 
-### R2: C16 label smoothing
+### R2: C17 baseline
 
 ```bash
-python -m research_extensions.evaluate_extension --datasets C16 --methods label_smoothing --recompute --device cuda --output-dir results/pretrained_R2
-python -m research_extensions.train_extension --datasets C16 --methods label_smoothing --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets C16 --methods label_smoothing --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R2
-```
-
-### R3: C17 baseline
-
-```bash
-python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --recompute --device cuda --output-dir results/pretrained_R3
+python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --recompute --device cuda --output-dir results/pretrained_R2
 python -m research_extensions.train_extension --datasets C17 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R3
+python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R2
 ```
 
-### R4: C17 label smoothing
+### R3: BRACS baseline
 
 ```bash
-python -m research_extensions.evaluate_extension --datasets C17 --methods label_smoothing --recompute --device cuda --output-dir results/pretrained_R4
-python -m research_extensions.train_extension --datasets C17 --methods label_smoothing --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets C17 --methods label_smoothing --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R4
-```
-
-### R5: BRACS baseline
-
-```bash
-python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --recompute --device cuda --output-dir results/pretrained_R5
+python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --recompute --device cuda --output-dir results/pretrained_R3
 python -m research_extensions.train_extension --datasets BRACS --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R5
+python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R3
 ```
 
-### R6: BRACS label smoothing
+The supplied checkpoints and saved probabilities support checking the reported values to the displayed precision. Fresh retraining can differ across hardware, drivers, or dependency builds despite fixed seeds; bitwise-identical training across platforms is not guaranteed. These are **single-seed** comparisons, with no confidence intervals or claim of statistical significance.
 
-```bash
-python -m research_extensions.evaluate_extension --datasets BRACS --methods label_smoothing --recompute --device cuda --output-dir results/pretrained_R6
-python -m research_extensions.train_extension --datasets BRACS --methods label_smoothing --epochs 30 --seed 42 --epsilon 0.1 --device cuda --output-dir results/retrained
-python -m research_extensions.evaluate_extension --datasets BRACS --methods label_smoothing --runs-dir results/retrained --recompute --device cuda --output-dir results/retrained_R6
-```
+## Selected research idea: top-k attention pooling
 
-The supplied checkpoints and saved probabilities support checking the reported values to the displayed precision. Fresh retraining can differ across hardware, drivers, or dependency builds despite fixed seeds; bitwise-identical training across platforms is not guaranteed. These are **single-seed** comparisons, with no confidence intervals or claim of statistical significance. Label smoothing has mixed effects: it worsens C16 calibration, improves C17 calibration while reducing minority-class recall/macro-F1, and produces small mixed changes on BRACS.
+Keep the gated patch scorer, projection, classifier, and ordinary cross-entropy. For a bag of N valid patches, choose the k highest attention logits, apply softmax over those selected logits, and pool only their projected features. Padding must be excluded, and k must be capped at the number of valid patches. Selecting all patches must reproduce the baseline.
+
+The hypothesis is that concentrating on the most informative patches can reduce background dilution. A small k may discard distributed tissue evidence, so improvement is an experimental question. Define the candidate k values before extension experiments and select k using validation only. Preserve the baseline features, splits, optimizer, epoch budget, initialization, sampler seed, and validation checkpoint rule. Report macro-AUROC, macro-F1, accuracy, per-class recall, and probability quality on all three datasets. Top-k pooling still scores every patch; reduced feature extraction cost is not assumed.
+
+**Status:** selected for implementation; no top-k code, checkpoints, or measured results are included yet. Diversity-regularized two-head attention remains the second proposal.
 
 ## 8. Validation and optional notebook/WSI workflow
 
@@ -238,7 +219,7 @@ The supplied checkpoints and saved probabilities support checking the reported v
 python -m unittest discover -s research_extensions/tests -v
 ```
 
-The suite checks model/engine equivalence with the notebook, smoothing values/gradients, padding and permutation behavior, controlled learning, paired seeds/order, validation-only selection, known probability metrics, checkpoint relocation, and the bundled results. Real-feature forward/backward integration checks run when all features are present; otherwise that test is explicitly skipped. Saved-artifact tests run without feature downloads.
+The suite checks baseline outputs against the notebook on unpadded bags, padding and permutation behavior, controlled learning, reproducible seeds/order, validation-only selection, known probability metrics, checkpoint relocation, and the bundled results. Real-feature forward/backward integration checks run when all features are present; otherwise that test is explicitly skipped. Saved-artifact tests run without feature downloads.
 
 For the educational notebook and optional raw-WSI attention overlays:
 
@@ -249,7 +230,7 @@ python scripts/validate_notebook.py
 python scripts/execute_notebook.py
 ```
 
-Alternatively select the new environment's interpreter in your notebook editor and run the cells in order. Set `PROJECT_DIR` if working outside the repository or in Colab. The notebook uses its own `results/` runs/cache and can train all six models; it does not automatically reuse `checkpoints/`. CLI runs and results are sufficient for reproducing the tables.
+Alternatively select the new environment's interpreter in your notebook editor and run the cells in order. Set `PROJECT_DIR` if working outside the repository or in Colab. The notebook uses its own baseline workflow and does not automatically reuse `checkpoints/`. CLI runs and results are sufficient for reproducing the tables.
 
 The optional overlays need approximately **4.95 GB** of raw slide/XML assets:
 
@@ -257,12 +238,11 @@ The optional overlays need approximately **4.95 GB** of raw slide/XML assets:
 python scripts/download_slides.py
 ```
 
-Run the notebook again after downloading to generate the overlays. `scripts/summarize_results.py` refreshes the notebook's discussion from its own completed `results/comparison.csv`; it is a notebook-only helper. OpenSlide may require a supported native library on your platform; see the [OpenSlide Python installation instructions](https://openslide.org/api/python/).
+Run the notebook again after downloading to generate the overlays. OpenSlide may require a supported native library on your platform; see the [OpenSlide Python installation instructions](https://openslide.org/api/python/).
 
 The reports' historical references to `results/<dataset>_<method>/best.pt` correspond to the byte-identical files now included under `checkpoints/<dataset>_<method>/best.pt`. Historical histories, predictions, and split files are included under `research_extensions/evaluation_results/`.
 
 ## References
 
 - Ilse, Tomczak, and Welling. [Attention-based Deep Multiple Instance Learning](https://proceedings.mlr.press/v80/ilse18a.html), ICML 2018.
-- Mueller, Kornblith, and Hinton. [When Does Label Smoothing Help?](https://arxiv.org/abs/1906.02629), NeurIPS 2019.
 - Ye, Linfeng. [WSI Feature](https://doi.org/10.5281/zenodo.23130543), course feature release, 2026.

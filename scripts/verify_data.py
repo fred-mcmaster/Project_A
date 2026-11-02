@@ -33,9 +33,8 @@ def main(argv=None):
                     raise ValueError(f'{dataset}/{slide_id}: invalid feature shape {shape}.')
         current = split_records(conf, datasets)
         reference_dir = ROOT / 'research_extensions' / 'evaluation_results'
-        for method in ('baseline', 'label_smoothing'):
-            reference = pd.read_csv(reference_dir / f'{dataset}_{method}' / 'splits.csv')
-            pd.testing.assert_frame_equal(current, reference, check_dtype=False)
+        reference = pd.read_csv(reference_dir / f'{dataset}_baseline' / 'splits.csv')
+        pd.testing.assert_frame_equal(current, reference, check_dtype=False)
         print(f'{dataset}: schema, labels, patch counts and ordered splits verified; '
               f'train/validation/test = {[len(ds) for ds in datasets]}', flush=True)
     print('For byte-level feature verification, also run scripts/download_features.py --verify-only.')

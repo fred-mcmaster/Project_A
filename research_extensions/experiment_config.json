@@ -5,10 +5,8 @@
     "BRACS"
   ],
   "methods": [
-    "baseline",
-    "label_smoothing"
+    "baseline"
   ],
-  "label_smoothing": 0.1,
   "epochs": 30,
   "seed": 42
 }

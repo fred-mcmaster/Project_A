@@ -1,6 +1,6 @@
-"""Masked gated ABMIL, exported unchanged from the completed notebook.
+"""Masked gated ABMIL baseline.
 
-The parameter names are compatible with all six original best.pt checkpoints.
+The parameter names are compatible with the three bundled baseline checkpoints.
 """
 import torch
 from torch import nn

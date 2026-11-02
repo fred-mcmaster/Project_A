@@ -1,127 +1,75 @@
-﻿# Research extensions: ABMIL with label smoothing
+# ABMIL baseline and research extension plan
 
-This folder packages the selected research idea independently of the notebook.
-The accompanying Word report explains **two proposals** and reports the implemented
-label-smoothing experiment on C16, C17, and BRACS. Diversity-regularized two-head
-attention is a proposal only; it is not claimed as implemented or evaluated.
+This folder contains the reproducible gated ABMIL baseline for C16, C17, and BRACS. **Top-k attention pooling is selected for implementation.** The code and bundled results currently cover the baseline only. The Word proposal also retains diversity-regularized two-head attention as the second research idea.
+
+## Selected idea: top-k attention pooling
+
+For each slide, score every valid patch with the existing gated attention network. Select the k highest attention logits, normalize only those logits with softmax, and form a weighted sum of the selected projected features. Exclude padding and use at most the slide's valid patch count. With all patches selected, pooling must match the baseline.
+
+Keep ordinary cross-entropy and the baseline training protocol. Define the k candidates before running extension experiments, select k using validation only, and evaluate the frozen selected model on the test split. Concentrating evidence may help when many patches are uninformative; it may also discard distributed tissue patterns. No improvement or runtime gain has been measured yet. All patches still need feature extraction and attention scoring.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `abmil_model.py` | Masked gated ABMIL; compatible with the original six checkpoints. |
-| `label_smoothing_loss.py` | Selected objective: uniform label smoothing, epsilon = 0.1. |
-| `training_engine.py` | Shared loader, training, hard-target evaluation, and calibration routines. |
-| `experiment_utils.py` | Dataset/configuration loading, split recording, selection, and provenance. |
-| `experiment_config.json` | Dataset list, methods, 30 epochs, seed 42, and smoothing strength. |
-| `train_extension.py` | Train baseline and extension with paired initialization and slide order. |
-| `evaluate_extension.py` | Evaluate frozen checkpoints, verify metrics, and export comparisons/plots. |
-| `tests/test_research_extensions.py` | Eight checks of mathematical correctness and the experiment controls. |
-| `evaluation_results/` | Verified results from all six original 30-epoch experiments. |
+| `abmil_model.py` | Masked gated ABMIL baseline, compatible with the three bundled checkpoints. |
+| `training_engine.py` | Loaders, optimization, hard-target evaluation, and calibration metrics. |
+| `experiment_utils.py` | Configuration, ordered splits, checkpoint selection, and provenance. |
+| `experiment_config.json` | Three datasets, baseline method, 30 epochs, seed 42. |
+| `train_extension.py` | Baseline training and validation-selected checkpoint export. |
+| `evaluate_extension.py` | Frozen checkpoint evaluation, saved-prediction verification, and plots. |
+| `tests/test_research_extensions.py` | Baseline behavior, reproducibility, and artifact checks. |
+| `evaluation_results/` | Results from the three completed 30-epoch baseline experiments. |
 
-## Setup
+## Verify the bundled baseline results
 
-Run the commands below from the project folder containing
-`ECE1512_ProjectA_Student.ipynb`. Use the existing `.venv` interpreter, or install
-`requirements.txt` in another Python environment. The existing YAML files specify
-feature paths and dataset-specific settings. No feature downloads are needed.
+Run from the repository root after installing `requirements.txt`:
 
-## Evaluate the completed experiments
-
-The original trained checkpoints remain in `results/C16_baseline`,
-`results/C16_label_smoothing`, and the equivalent C17/BRACS directories. These
-are six completed 30-epoch experiments, not one-epoch demonstration results.
-
-```powershell
-.\.venv\Scripts\python.exe -m research_extensions.evaluate_extension
+```bash
+python -m research_extensions.evaluate_extension --device cpu
 ```
 
-This verifies the saved validation-selected epochs and independently calculates
-accuracy, macro-AUROC, macro-F1, hard-target NLL, Brier score, and 15-bin top-label
-ECE from saved test predictions. If a run has no saved test predictions, its
-frozen checkpoint is evaluated. Outputs go to `research_extensions/evaluation_results/`.
+This verifies checkpoint hashes, ordered split membership, validation-selected epochs, and metrics using the tracked predictions without downloading features. Bundled weights are in `checkpoints/<dataset>_baseline/best.pt`. Outputs go to `results/pretrained_evaluation/`.
 
-To reproduce inference and verify the exported model against the saved predictions:
+To rerun inference after downloading the features:
 
-```powershell
-.\.venv\Scripts\python.exe -m research_extensions.evaluate_extension --recompute
+```bash
+python -m research_extensions.evaluate_extension --recompute --device cuda
 ```
 
-Inference does not reselect checkpoints or tune hyperparameters. The delivered
-results were checked using this option. `evaluation_provenance.json` records
-checkpoint hashes, inference mode, and maximum probability differences.
-For old notebook checkpoints without a smoothing field, the evaluator records
-the notebook's fixed epsilon of 0.1; their folder names and stored test signatures
-identify the original baseline/extension runs.
+The evaluator compares recomputed probabilities with the saved predictions and records checkpoint hashes and inference differences in `evaluation_provenance.json`. Inference does not reselect epochs.
 
-## Train fresh experiments
+## Train and evaluate fresh baselines
 
-```powershell
-.\.venv\Scripts\python.exe -m research_extensions.train_extension
-.\.venv\Scripts\python.exe -m research_extensions.evaluate_extension --runs-dir results/research_extension_runs --output-dir research_extensions/fresh_evaluation_results
+```bash
+python -m research_extensions.train_extension --epochs 30 --seed 42 --device cuda
+python -m research_extensions.evaluate_extension --runs-dir results/research_extension_runs --recompute --device cuda --output-dir results/retrained_evaluation
 ```
 
-Training defaults to all three datasets and both methods. New checkpoints and
-histories are saved under `results/research_extension_runs/`, separate from the
-original experiments. The training command selects a checkpoint using validation
-macro-AUROC + macro-F1 and does not evaluate the test set. Ties keep the earliest
-epoch. The evaluation command is the final test step after selection.
+Training defaults to all three datasets and `baseline`. It selects the checkpoint with maximum validation macro-AUROC + macro-F1, keeping the earliest epoch on a tie. Test data are evaluated only by the second command. Use `--device cpu` if needed.
 
-Completed matching experiments are reused. If settings or implementation files
-change, use a new `--output-dir` or explicitly pass `--overwrite` to replace the
-generated runs. The full configuration, split IDs, feature-file metadata, and
-implementation hashes are recorded in each run's `manifest.json`.
+Completed matching runs are reused. Changed configurations or code require a new `--output-dir` or explicit `--overwrite`. Each run saves its configuration, implementation hashes, ordered splits, checkpoint, and history. A short pipeline check uses a separate directory:
 
-A short debugging run uses a separate folder:
-
-```powershell
-.\.venv\Scripts\python.exe -m research_extensions.train_extension --datasets C16 --epochs 1 --output-dir results/research_extension_debug
+```bash
+python -m research_extensions.train_extension --datasets C16 --epochs 1 --device cpu --output-dir results/baseline_smoke
+python -m research_extensions.evaluate_extension --datasets C16 --runs-dir results/baseline_smoke --device cpu --output-dir results/baseline_smoke_evaluation
 ```
 
-Debugging results are not the reported 30-epoch experiments. Additional options
-include `--methods`, `--seed`, `--epsilon`, `--device`, and `--project-dir`.
+## Evaluation artifacts
 
-## Experimental controls
-
-- Only the training objective changes: ordinary CE versus CE with epsilon = 0.1.
-- Architecture, full feature bags, training slides, splits, seed, optimizer,
-  learning rate, weight decay, batch size, and epoch budget are paired.
-- Both methods reset the model seed and use the same independently seeded
-  training sampler. Validation/test data are not shuffled.
-- Validation and test always use **ordinary cross-entropy**, so loss is comparable
-  NLL. The smoothed training objective is not reported as test NLL.
-- C16 uses two classes, C17 four, and BRACS all seven original classes.
-- The provided C17 train/validation split shares patients; test patients and
-  centers are separate. This limitation is retained and discussed in the report.
-- The single-seed comparison does not establish statistical significance.
-
-## Output files
-
-- `extension_comparison.csv`: six method/dataset rows with selected epochs and metrics.
-- `extension_deltas.csv`: label smoothing minus baseline; accuracy is in percentage points.
-- `extension_per_class_metrics.csv`: precision, recall, F1, and support for every class.
+- `extension_comparison.csv`: three baseline rows with selected epochs and classification/calibration metrics.
+- `extension_per_class_metrics.csv`: precision, recall, F1, and support.
 - `extension_learning_and_calibration.png`: validation NLL and test reliability plots.
-- `extension_confusion_matrices.png`: class-level errors for both methods.
-- `evaluation_provenance.json`: source checkpoint hashes and inference verification.
-- `<dataset>_<method>/`: test probabilities, metrics, training history, split IDs,
-  reliability bins, and confusion counts.
+- `extension_confusion_matrices.png`: baseline class-level errors.
+- `evaluation_provenance.json`: checkpoint hashes, verification mode, and implementation hashes.
+- `<dataset>_baseline/`: predictions, metrics, histories, ordered splits, reliability bins, and confusion counts.
 
-Lower NLL, Brier score, and ECE is better. The observed changes are mixed: C16
-calibration worsens; C17 calibration improves but minority-class recall and
-macro-F1 fall; BRACS shows small calibration/F1 gains with a small AUROC decrease.
-No test-driven hyperparameter changes were made to improve these outcomes.
+The shared output filenames retain the `extension_` prefix for the future extension workflow. They currently contain baseline evidence only. Lower NLL, Brier score, and ECE is better. These are single-seed runs; C17's supplied train/validation split shares 27 patients, while test patients and centers remain separate.
 
 ## Checks
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s research_extensions/tests -v
+```bash
+python -m unittest discover -s research_extensions/tests -v
 ```
 
-Checks cover exact model/engine equivalence to the notebook, the smoothed-target
-formula and gradients for 2/4/7 classes, padding and permutation behavior, learning
-on a small controlled task, read-only evaluation, paired initialization/order,
-validation-only selection with tie handling, known probability metrics, and
-forward/backward passes on real bags from all three datasets.
-
-The supplied notebook and its highlighted answers remain the guided educational
-version; these files provide the standalone implementation and reproducible CLI.
+Checks cover baseline agreement with the notebook on unpadded bags, masking, permutation invariance, learning, read-only evaluation, reproducible initialization/order, validation-only checkpoint selection, probability metrics, checkpoint relocation, and bundled artifacts. Real-feature integration runs when all three feature files are present.

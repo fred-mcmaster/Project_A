@@ -10,20 +10,7 @@
       "best_epoch": 3,
       "epochs": 30,
       "seed": 42,
-      "label_smoothing": 0.0,
       "training_signature": "17036788cc5f4ddd990b94c350e25fb27478bffa5e6f656f9d5a5e5003e1cdfd"
-    },
-    {
-      "dataset": "C16",
-      "method": "label_smoothing",
-      "path": "checkpoints/C16_label_smoothing/best.pt",
-      "sha256": "663195c49a622dea8b8a1a3509202b5e7fb8508f06b2b89c55864adde783fd62",
-      "size_bytes": 669525,
-      "best_epoch": 3,
-      "epochs": 30,
-      "seed": 42,
-      "label_smoothing": 0.1,
-      "training_signature": "33d179990cde8a641dba50b543c51cac506bf297aa7e867923bc52a34eb267e3"
     },
     {
       "dataset": "C17",
@@ -34,20 +21,7 @@
       "best_epoch": 22,
       "epochs": 30,
       "seed": 42,
-      "label_smoothing": 0.0,
       "training_signature": "7e72b3d29928c9701a461d4a8cbbad62997f330c4e89d27b81578497f52100fa"
-    },
-    {
-      "dataset": "C17",
-      "method": "label_smoothing",
-      "path": "checkpoints/C17_label_smoothing/best.pt",
-      "sha256": "5a425420013474f3c0e964c2a9e66a2a12680fa0be7d7dc91a821a1b112de0dd",
-      "size_bytes": 671637,
-      "best_epoch": 5,
-      "epochs": 30,
-      "seed": 42,
-      "label_smoothing": 0.1,
-      "training_signature": "e35c6882e0a761c409697ce3b04bd4a3def2acf4ba9934b79ffd2e130aab5870"
     },
     {
       "dataset": "BRACS",
@@ -58,20 +32,7 @@
       "best_epoch": 6,
       "epochs": 30,
       "seed": 42,
-      "label_smoothing": 0.0,
       "training_signature": "57f2d46a6dd1dc91ed172ad792fb3a785cfcdb23cd581b18d53df0a33a726587"
-    },
-    {
-      "dataset": "BRACS",
-      "method": "label_smoothing",
-      "path": "checkpoints/BRACS_label_smoothing/best.pt",
-      "sha256": "49066ae4b445aad62ed9bb90366f7044b5541864bf0ed25ee833b0c49c877116",
-      "size_bytes": 674645,
-      "best_epoch": 6,
-      "epochs": 30,
-      "seed": 42,
-      "label_smoothing": 0.1,
-      "training_signature": "5186a8a130501eaf27c93301ac85889f88d1ea9fd56c288febde2e8fbc70a630"
     }
   ]
 }

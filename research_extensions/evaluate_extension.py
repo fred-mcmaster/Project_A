@@ -1,6 +1,6 @@
-﻿"""Compare frozen baseline and label-smoothing checkpoints on all three datasets.
+"""Evaluate frozen ABMIL baseline checkpoints on all three datasets.
 
-Defaults to the six tracked prediction/history exports and bundled checkpoints.
+Defaults to the three tracked prediction/history exports and bundled checkpoints.
 Existing predictions are verified and reused without feature files. --recompute
 reruns inference and checks saved predictions; it never reselects an epoch.
 """
@@ -21,7 +21,6 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, log_loss, p
 from dataloader import build_HDF5_feat_dataset
 from research_extensions.abmil_model import ABMIL
 from research_extensions.training_engine import make_loaders, evaluate
-from research_extensions.label_smoothing_loss import make_evaluation_loss
 from research_extensions.experiment_utils import (
     CONFIG_FILES, DATASET_NAMES, SPLIT_NAMES, config_from_checkpoint, resolve_path,
     selected_epoch, sha256_file,
@@ -82,21 +81,11 @@ def read_run(root, runs_dir, dataset, method, checkpoints_dir=None):
     return run_dir, saved, history, split_table, conf, checkpoint_path
 
 
-def check_pair(pair):
-    left, right = pair['baseline'], pair['label_smoothing']
-    for field in ('dataset','data_dir','D_feat','D_inner','D_attn','n_class','B','n_shot','seed','lr','wd','droprate'):
-        if getattr(left['conf'], field) != getattr(right['conf'], field):
-            raise ValueError(f'Uncontrolled baseline/extension difference: {field}')
-    if left['saved']['epochs_completed'] != right['saved']['epochs_completed']:
-        raise ValueError('Paired runs must have the same epoch budget.')
-    pd.testing.assert_frame_equal(left['splits'], right['splits'])
-
-
 def plots(output, records, datasets, methods):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    colors = {'baseline':'#176B9E', 'label_smoothing':'#D66B27'}
+    colors = {'baseline':'#176B9E'}
     fig, axes = plt.subplots(2, len(datasets), figsize=(5*len(datasets),8), squeeze=False)
     for col, dataset in enumerate(datasets):
         axes[1,col].plot([0,1],[0,1],'--',color='gray',label='ideal')
@@ -146,7 +135,7 @@ def main(argv=None):
     parser.add_argument('--checkpoints-dir',type=Path,default=Path('checkpoints'),help='Fallback for bundled pretrained weights.')
     parser.add_argument('--output-dir',type=Path,default=Path('results/pretrained_evaluation'))
     parser.add_argument('--datasets',nargs='+',choices=list(CONFIG_FILES),default=list(CONFIG_FILES))
-    parser.add_argument('--methods',nargs='+',choices=['baseline','label_smoothing'],default=['baseline','label_smoothing'])
+    parser.add_argument('--methods',nargs='+',choices=['baseline'],default=['baseline'])
     parser.add_argument('--recompute',action='store_true',help='Reproduce checkpoint inference and compare to any saved predictions.')
     parser.add_argument('--device',choices=['auto','cpu','cuda'],default='auto')
     args=parser.parse_args(argv)
@@ -168,8 +157,6 @@ def main(argv=None):
         for method in args.methods:
             run_dir,saved,history,split_table,conf,checkpoint_path=read_run(root,runs_dir,dataset,method,checkpoints_dir)
             pair[method]=dict(saved=saved,history=history,splits=split_table,conf=conf,run_dir=run_dir,checkpoint_path=checkpoint_path)
-        if set(pair) == {'baseline','label_smoothing'}:
-            check_pair(pair)
         for method,record in pair.items():
             run_dir,saved,conf=record['run_dir'],record['saved'],record['conf']
             original_path=run_dir/'test_predictions.csv'
@@ -184,7 +171,7 @@ def main(argv=None):
                 loader=make_loaders(*datasets,conf)[2]
                 model=ABMIL(conf).to(device)
                 model.load_state_dict(saved['model_state'],strict=True)
-                _,predictions=evaluate(model,make_evaluation_loss(),loader,device,conf,return_predictions=True)
+                _,predictions=evaluate(model,torch.nn.CrossEntropyLoss(),loader,device,conf,return_predictions=True)
                 del model,loader,datasets
                 mode='checkpoint_inference'
                 if original is not None:
@@ -214,9 +201,8 @@ def main(argv=None):
             record['history'].to_csv(target/'history.csv',index=False)
             record['splits'].to_csv(target/'splits.csv',index=False)
             (target/'test_metrics.json').write_text(json.dumps(metrics,indent=2),encoding='utf-8')
-            epsilon=float(saved.get('label_smoothing',0.0 if method=='baseline' else 0.1))
             rows.append(dict(dataset=dataset,method=method,epochs=int(saved['epochs_completed']),
-                             best_epoch=int(saved['best_epoch'])+1,seed=int(conf.seed),label_smoothing=epsilon,**metrics))
+                             best_epoch=int(saved['best_epoch'])+1,seed=int(conf.seed),**metrics))
             precision,recall,f1,support=precision_recall_fscore_support(predictions.label,predictions.prediction,
                 labels=np.arange(int(conf.n_class)),zero_division=0)
             for cls in range(int(conf.n_class)):
@@ -226,7 +212,7 @@ def main(argv=None):
             records[(dataset,method)]=record
             provenance.append(dict(dataset=dataset,method=method,mode=mode,source_checkpoint=str(record['checkpoint_path']),
                 source_checkpoint_sha256=sha256_file(record['checkpoint_path']),training_signature=saved['signature'],
-                legacy_notebook_checkpoint=('method' not in saved),label_smoothing=epsilon,
+                legacy_notebook_checkpoint=('method' not in saved),
                 saved_prediction_max_abs_difference=maximum_difference,
                 test_count=len(predictions),selected_epoch=int(saved['best_epoch'])+1,epochs_completed=int(saved['epochs_completed'])))
             print(f'{dataset}/{method}: AUC={metrics["auc"]:.4f} F1={metrics["f1"]:.4f} '
@@ -234,13 +220,6 @@ def main(argv=None):
     comparison=pd.DataFrame(rows)
     comparison.to_csv(output/'extension_comparison.csv',index=False)
     pd.DataFrame(per_class).to_csv(output/'extension_per_class_metrics.csv',index=False)
-    differences=[]
-    indexed=comparison.set_index(['dataset','method'])
-    if {'baseline','label_smoothing'} <= set(args.methods):
-        for dataset in args.datasets:
-            left,right=indexed.loc[(dataset,'baseline')],indexed.loc[(dataset,'label_smoothing')]
-            differences.append(dict(dataset=dataset,**{key:float(right[key]-left[key]) for key in ('auc','f1','acc','loss','brier','ece')}))
-    pd.DataFrame(differences,columns=['dataset','auc','f1','acc','loss','brier','ece']).to_csv(output/'extension_deltas.csv',index=False)
     plots(output,records,args.datasets,args.methods)
     payload=dict(protocol='Fixed checkpoints selected by validation AUROC + F1; no test-based tuning.',
                  ece_bins=15,brier_definition='Mean over slides of sum over classes of squared probability error.',
