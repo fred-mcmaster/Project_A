@@ -93,6 +93,10 @@ The C17 partition is an experiment split of available challenge training slides.
 
 `best_model_state` and the epoch history are held in notebook memory; these notebooks do not automatically export checkpoints, CSV histories, test probabilities, or pairing manifests. Saved cell outputs record the reported measurements. An independent rerun requires training again unless a checkpoint has been saved separately.
 
+## Proposed alternative: Focal Loss
+
+Focal Loss is a proposed, unimplemented alternative to cross-entropy for addressing class imbalance and easy examples: it downweights confident predictions via $(1-p_t)^\gamma$ and can use class weights $\alpha$. Comparing class-wise held-out recall and F1 against cross-entropy would test whether it improves recognition of difficult or underrepresented classes; it is not part of the reported runs.
+
 ## Pooling and training configuration
 
 For a slide with `N` patches, the current implementation computes:
