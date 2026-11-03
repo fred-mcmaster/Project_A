@@ -1,39 +1,31 @@
-# ECE1512 Project A: reproducible ABMIL experiments
+# ECE1512 Project A: ABMIL and Top-K attention pooling (20%)
 
-This project classifies whole-slide histopathology images using **gated attention-based multiple instance learning (ABMIL)** on fixed, pre-extracted medical-SSL patch features. It provides a reproducible PyTorch baseline and implements **top-k attention pooling** as the selected research extension.
+This project classifies whole-slide histopathology images using gated attention-based multiple instance learning (ABMIL) on fixed, pre-extracted medical-SSL patch features. The research extension uses **ratio-based Top-K attention pooling**, retaining the highest-scoring **20% of patches in each slide** (`conf.topk_ratio = 0.20`). The image encoder is fixed; training updates the MIL aggregator and classifier.
 
-The completed baseline covers CAMELYON16 (C16), CAMELYON17 (C17), and BRACS: **30 epochs per dataset, seed 42**. The [baseline summary](<ECE1512 ProjectA Baseline Evaluation Summary.docx>) includes measured results and the nine notebook report questions and answers. The [research proposal](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx) describes selected top-k attention pooling and the alternative diversity-regularized two-head idea. The full paired 30-epoch baseline/top-k comparison is complete on all three datasets. The report includes measured results and discussion. The second idea remains tentative. The image encoder is fixed; training updates the MIL aggregator and classifier.
+The saved notebook outputs are the source of the results below. All three baseline notebooks contain completed 30-epoch runs. The C16 and BRACS Top-K notebooks also contain completed 30-epoch runs; **the local C17 Top-K notebook has no saved outputs**, so its 20% result is unavailable. The earlier fixed-128 experiments are a different pooling configuration and do not supply results for the current ratio.
 
-## 1. What is included
+## Included notebooks and code
 
-| Artifact | Location |
-|---|---|
-| Pinned training/evaluation dependencies | [`requirements.txt`](requirements.txt) |
-| Optional notebook/WSI dependencies | [`requirements-notebook.txt`](requirements-notebook.txt) |
-| Training CLI and shared model/engine | [`research_extensions/`](research_extensions/) |
-| Evaluation CLI | [`research_extensions/evaluate_extension.py`](research_extensions/evaluate_extension.py) |
-| Six fresh paired checkpoints and manifests | [`checkpoints/top_k_128_full/`](checkpoints/top_k_128_full/) |
-| Three original validation-selected baseline checkpoints (~2 MB total) | [`checkpoints/`](checkpoints/), included directly in Git |
-| Checkpoint hashes and original compute environment | [`checkpoints/manifest.json`](checkpoints/manifest.json), [`checkpoints/environment.json`](checkpoints/environment.json) |
-| Per-slide test probabilities, histories, ordered splits, metrics, figures | [`research_extensions/evaluation_results/`](research_extensions/evaluation_results/) |
-| Dataset checksums and immutable download revision | [`data_manifest.json`](data_manifest.json) |
-| Dataset-specific settings and experiment settings | [`config/`](config/), [`experiment_config.json`](research_extensions/experiment_config.json) |
-| Educational notebook | [`ECE1512_ProjectA_Student.ipynb`](ECE1512_ProjectA_Student.ipynb) |
+| Dataset | ABMIL baseline | Top-K 20% |
+|---|---|---|
+| C16 | [Student C16](ECE1512_ProjectA_Student_C16.ipynb) | [Top-K C16](ECE1512_ProjectA_TopK_C16.ipynb) |
+| C17 | [Student C17](ECE1512_ProjectA_Student_C17.ipynb) | [Top-K C17](ECE1512_ProjectA_TopK_C17.ipynb) |
+| BRACS | [Student BRACS](ECE1512_ProjectA_Student_BRACS.ipynb) | [Top-K BRACS](ECE1512_ProjectA_TopK_BRACS.ipynb) |
 
-Feature files and raw slides are downloaded separately. Generated runs go under ignored `results/`; the checkpoints and reference results above are versioned. The notebook is supplied with outputs cleared; the CLI is the primary reproduction path.
+Shared data loading and metric helpers are in [`dataloader.py`](dataloader.py) and [`utils.py`](utils.py). Dataset settings are in [`config/`](config/), split metadata is in [`dataset_csv/`](dataset_csv/README.md), and optional C16 attention overlays use [`wsi_visualization.py`](wsi_visualization.py). The measured outcomes and their interpretation are in [`observed_results.md`](observed_results.md).
 
-## 2. Clone and install
+Each Top-K notebook trains its selected dataset independently. Baseline training is in the separate Student notebooks.
 
-Use **64-bit Python 3.12** (the recorded version is **3.12.7**). Run all commands from the repository root.
+## Setup
+
+Use 64-bit Python 3.12 and run from the repository root. The saved C16 and BRACS Top-K outputs report PyTorch **2.13.0+cu126**, CUDA available, and an **NVIDIA GeForce RTX 3080 Ti**.
 
 ```bash
 git clone https://github.com/fred-mcmaster/Project_A.git
 cd Project_A
 ```
 
-Create and activate an isolated environment using your platform's commands.
-
-Windows PowerShell:
+Create and activate an environment. Windows PowerShell:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -47,40 +39,31 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 ```
 
-Choose **one** PyTorch installation below, then install the remaining pinned dependencies. The original experiments used Windows, PyTorch **2.13.0+cu126**, CUDA 12.6, and an **NVIDIA GeForce RTX 3080 Ti**. CUDA requires a compatible NVIDIA driver. See the [PyTorch installation documentation](https://pytorch.org/get-started/locally/).
+For the CUDA build recorded in the notebook outputs, install PyTorch first:
 
 ```bash
-# Original CUDA build, for Windows/Linux with an NVIDIA GPU:
 python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu126
-
-# Or CPU build, for Windows/Linux without a compatible GPU:
-python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
-
-# Or macOS (the supplied CLI uses CPU on macOS):
-python -m pip install torch==2.13.0
 ```
+
+For CPU execution, use the CPU build instead on Windows/Linux:
+
+```bash
+python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+```
+
+On macOS, use `python -m pip install torch==2.13.0`. Then install the shared dependencies and notebook kernel:
 
 ```bash
 python -m pip install -r requirements.txt
+python -m pip install ipykernel
 python -m pip check
 ```
 
-The direct package versions are pinned to the recorded environment. Platform-specific transitive dependencies are resolved by pip. CPU inference and training are supported but can be substantially slower. The original GPU has 12 GB VRAM; minimum memory and wall-clock runtime have not been benchmarked. Full variable-length bags are used.
+Select this environment as the notebook kernel in your editor. The notebooks choose CUDA when available and CPU otherwise. The first notebook cell also provides a convenience dependency installation command; `requirements.txt` supplies the pinned training dependencies.
 
-## 3. Dataset source and download
+## Feature data and splits
 
-The course's pre-extracted **WSI Feature** dataset is published by Linfeng Ye at [Zenodo, DOI 10.5281/zenodo.23130543](https://zenodo.org/records/23130543), with a [Hugging Face copy](https://huggingface.co/datasets/LeonYe/ECE1512-WSI-Feature/tree/6df7ef4b42b7ecd11633722a392a1efc6d80bcc7). The underlying datasets are [CAMELYON16](https://camelyon16.grand-challenge.org/), [CAMELYON17](https://camelyon17.grand-challenge.org/), and [BRACS](https://www.bracs.icar.cnr.it/). Use the supplied features for this experiment; newly extracted features are a different input representation.
-
-Download all three HDF5 files (**15.54 GB total**, plus environment/output storage):
-
-```bash
-python scripts/download_features.py
-python scripts/verify_data.py
-```
-
-The downloader uses the immutable Hugging Face revision in `data_manifest.json`, streams one file at a time, and checks byte size and SHA256 before accepting it. Existing files are checked and reused. To download just one dataset, append `--datasets C16`, `--datasets C17`, or `--datasets BRACS`. To inspect URLs without downloading, use `--dry-run`. Interrupted `.part` files are restarted on the next download attempt.
-
-The destination layout intentionally matches the existing YAML files and original checkpoints:
+Download the course's pre-extracted WSI features from [Zenodo](https://zenodo.org/records/23130543) or the [Hugging Face dataset](https://huggingface.co/datasets/LeonYe/ECE1512-WSI-Feature). Extract the HDF5 files into the layout expected by the YAML configurations:
 
 ```text
 feature/
@@ -90,189 +73,82 @@ feature/
     C17/patch_feats_pretrain_medical_ssl.h5   # CAMELYON17
 ```
 
-For a manual Zenodo download, obtain `C16.zip`, `C17.zip`, and `BRACS.zip`, extract them, and place each `patch_feats_pretrain_medical_ssl.h5` at the corresponding path above. Check the files after extraction:
-
-```bash
-python scripts/download_features.py --verify-only
-python scripts/verify_data.py
-```
-
-If storing features elsewhere, edit only `data_dir` in the relevant `config/*.yml` and run `verify_data.py`; training and checkpoint evaluation both use these checkout-local paths. `download_features.py` always uses the destinations recorded in `data_manifest.json`; its `--verify-only` option checks that default layout.
-
-Each top-level HDF5 key is a slide ID, containing `feat [num_patches, 384]`, optional `coords [num_patches, 2]`, and an integer `label` attribute on the slide group. Labels are read from HDF5. The versioned [metadata CSVs](dataset_csv/README.md) supply the C17 centers/patient IDs and BRACS split assignments. They are already included; no access to the original author's local metadata path is needed.
+If features are stored elsewhere, update `data_dir` in the corresponding `config/*.yml`. Each HDF5 slide group provides `feat [num_patches, 384]`, an integer `label` attribute, and optional patch coordinates. The loader reads labels from HDF5 and uses the included metadata CSVs for C17 centers and BRACS split assignments.
 
 | Dataset | Classes | Train | Validation | Test | Split protocol |
 |---|---:|---:|---:|---:|---|
 | C16 | 2 | 242 | 27 | 129 | IDs containing `test` held out; stratified 10% validation of remaining slides, seed 42 |
 | C17 | 4 | 269 | 30 | 200 | Centers 0-2 for development, centers 3-4 for test; stratified 10% slide-level validation, seed 42 |
-| BRACS | 7 | 389 | 62 | 86 | Versioned CSV train/validation/test assignments; original seven classes |
+| BRACS | 7 | 389 | 62 | 86 | Included CSV train/validation/test assignments; original seven classes |
 
-`verify_data.py` checks every slide's feature shape, label, patch count, and **ordered** split membership against the reference exports. C17's split is a course experiment partition of the available challenge training slides; it is not the official challenge train/test partition. Its training and validation sets share 27 patients; test patients and centers remain separate.
+The C17 partition is an experiment split of available challenge training slides. Validation is split by slide rather than by patient; it should not be interpreted as patient-independent validation.
 
-## 4. Verify or evaluate the pretrained models
+## Run the experiments
 
-The following command reproduces all reported metrics from the **tracked test probabilities**, verifies each checkpoint's SHA256, and checks that the selected epoch matches the validation history. It requires **no downloaded features and no retraining**:
+1. Open the dataset-specific notebook and select the configured Python environment.
+2. Check `PROJECT_DIR`, `DATASET`, and the feature path printed in Step 0. The Top-K notebooks set `conf.use_topk = True` and `conf.topk_ratio = 0.20` after loading the YAML configuration.
+3. Restart the kernel and run cells in order through Step 7. The batch preview and model sanity cells consume random numbers, so execution order matters for reproducing the saved run.
+4. Keep `NUM_EPOCHS = int(conf.train_epoch)` (30). Step 6 selects the checkpoint using validation macro-AUROC + macro-F1, retaining the earliest exact tie. Step 7 restores that state for held-out test evaluation.
+5. Save the notebook with its outputs. Step 8 prints attention normalization and selected-patch counts. The final WSI visualization cell is optional.
 
-```bash
-python scripts/verify_results.py --device cpu
+`best_model_state` and the epoch history are held in notebook memory; these notebooks do not automatically export checkpoints, CSV histories, test probabilities, or pairing manifests. Saved cell outputs record the reported measurements. An independent rerun requires training again unless a checkpoint has been saved separately.
+
+## Pooling and training configuration
+
+For a slide with `N` patches, the current implementation computes:
+
+```python
+k = max(1, int(N * conf.topk_ratio))  # ratio = 0.20
 ```
 
-To actually run inference using all three bundled baseline checkpoints, first download the features, then run:
+It scores every patch with the gated attention network, retains the `k` largest attention logits, masks all other logits to negative infinity, and applies softmax over the retained set. The weighted sum of projected features forms the slide representation. Thus `k` varies with slide size and uses floor rounding, with at least one patch retained. A ratio of 1.0 retains every patch and recovers ordinary attention pooling.
 
-```bash
-python -m research_extensions.evaluate_extension --recompute --device cuda
-```
-
-Use `--device cpu` if needed. Outputs go to `results/pretrained_evaluation/`, preserving the versioned reference artifacts. The evaluator verifies ordered test IDs/labels and compares recomputed probabilities with the saved predictions (`rtol=2e-5`, `atol=2e-6`). It also independently recomputes the metrics (`rtol=2e-5`, `atol=1e-5`). `evaluation_provenance.json` records actual checkpoint hashes, execution mode, device, and prediction differences.
-
-## 5. Train and evaluate baseline versus top-k pooling
-
-After dataset verification, run:
-
-```bash
-python -m research_extensions.train_extension --methods baseline top_k --top-k 128 --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
-python -m research_extensions.evaluate_extension --methods baseline top_k --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_evaluation
-```
-
-The first command trains six runs: baseline and top-k pooling on each of the three datasets and selects checkpoints using **validation macro-AUROC + macro-F1**, keeping the earliest epoch on a tie. It never evaluates the test split. The second command performs final test inference on those selected checkpoints. Both methods start from identical model weights and training-sampler order. The exploratory setting is an absolute `k=128` patches per slide; it is not a validated optimum. Use `--methods baseline` to run only the baseline.
-
-Training writes `<dataset>_<method>/best.pt`, `history.csv`, `manifest.json`, and `<dataset>/splits.csv`. Evaluation writes `extension_comparison.csv`, `extension_deltas.csv` (top-k minus baseline), per-class metrics, calibration/confusion figures, and per-run test probabilities/metrics. Checkpoints include model weights, selected epoch, completed epoch count, configuration including pooling mode and k, training signature, and history. Evaluation restores k from the checkpoint; it does not accept an inference-time override.
-
-Completed experiments with matching signatures are reused. To force a fresh run, choose a new training output directory and pass that same directory as evaluation's `--runs-dir`, or explicitly use `--overwrite`. A changed code/configuration signature requires a new directory or `--overwrite`. These local cache signatures include feature file timestamps and paths; they are not intended to match across machines. Checkpoint hashes identify the original supplied models.
-
-For a short pipeline check (not a reported result):
-
-```bash
-python -m research_extensions.train_extension --datasets C16 --methods baseline top_k --top-k 128 --epochs 1 --device cuda --output-dir results/smoke
-python -m research_extensions.evaluate_extension --datasets C16 --methods baseline top_k --runs-dir results/smoke --recompute --device cuda --output-dir results/smoke_evaluation
-```
-
-## 6. Hyperparameters and experiment configuration
-
-| Setting | Value used for every reported run |
+| Setting | Notebook value |
 |---|---|
-| Features | Fixed medical-SSL features, 384 dimensions; every patch in each bag |
+| Features | Fixed medical-SSL, 384 dimensions; all patches scored |
 | Projection | Linear(384, 256), ReLU |
-| Attention | Same gated scorer; baseline softmax over all valid patches, top-k softmax over at most 128 |
-| Classifier | Linear(256, C); C = 2 / 4 / 7 for C16 / C17 / BRACS |
+| Attention | Gated scorer, hidden dimension 128, one attention head |
+| Pooling | Baseline: all patches; Top-K: highest-scoring 20%, softmax renormalized |
+| Classifier | Linear(256, C), with C = 2 / 4 / 7 |
 | Dropout | 0.0 |
-| Training objective | Ordinary hard-target cross-entropy |
-| Optimizer | AdamW; learning rate = 0.0001; weight decay = 0.00001; default betas = (0.9, 0.999), eps = 1e-8 |
-| Schedule | Constant learning rate; no warm-up, scheduler, early stopping, or augmentation |
+| Loss | Ordinary hard-target cross-entropy |
+| Optimizer | AdamW, learning rate 0.0001, weight decay 0.00001 |
 | Epochs / batch size | 30 / 1 slide |
 | Training subset | All training slides (`n_shot=0`) |
-| Seed | 42 for Python, NumPy, PyTorch, and the training sampler |
-| Data loading | 0 workers; training shuffled, validation/test ordered; CPU threads capped at 4 |
+| Seed | 42 |
+| Data loading | 0 workers; training shuffled, validation/test ordered |
 | Model selection | Maximum validation macro-AUROC + macro-F1, earliest tie |
-| Validation/test loss | Ordinary hard-target cross-entropy |
+| Schedule | Constant learning rate; no scheduler or early stopping |
 
-Dataset-specific values live in `config/*.yml`; datasets, methods, top-k count, epochs, and seed also live in `research_extensions/experiment_config.json`. Implemented methods are `baseline` and `top_k`; the default training configuration includes both, with `top_k: 128`. Evaluation defaults to the three bundled baselines; pass `--methods baseline top_k` and a fresh `--runs-dir` for paired results. CLI flags override the experiment JSON; the CLI infers feature dimension from the HDF5 file. `warmup_epoch` and `n_res` are inherited starter fields and are **unused**.
+`warmup_epoch` and `n_res` are inherited configuration fields and are unused. Keep batch size 1 for this notebook implementation: the model does not consume the padding mask returned by the collate helper, so variable-length padded batches would require additional masking support. Scoring and projection still process the full bag; the experiment does not establish lower feature extraction or full-bag scoring cost.
 
-## 7. Results and exact commands for every row
+## Results from saved notebook outputs
 
-These baseline values match the baseline report and [`extension_comparison.csv`](research_extensions/evaluation_results/extension_comparison.csv). All three baseline runs completed 30 epochs; selected epochs below are **one-based**. AUROC is macro one-vs-rest (binary C16 equals positive-class AUROC); F1 is macro-F1. Accuracy is a percentage. NLL is mean hard-target CE, Brier is the mean sum of squared class-probability errors, and ECE uses 15 equal-width top-label confidence bins. Lower NLL/Brier/ECE is better.
+Values below are copied from **Step 7, final held-out test evaluation** (cell index 30) in the linked notebooks. Selected epochs are one-based; all five runs with saved results completed 30 epochs. Accuracy is a percentage, AUROC and F1 are macro averages, and test loss is mean cross-entropy (NLL; lower is better).
 
-| Row | Dataset | Method | Selected epoch | Accuracy (%) | AUROC | Macro-F1 | NLL | Brier | ECE |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| [R1](#r1-c16-baseline) | C16 | Baseline CE | 3 | 88.37 | 0.9342 | 0.8668 | 0.2804 | 0.1628 | 0.0564 |
-| [R2](#r2-c17-baseline) | C17 | Baseline CE | 22 | 78.50 | 0.8243 | 0.5339 | 0.7347 | 0.3253 | 0.1148 |
-| [R3](#r3-bracs-baseline) | BRACS | Baseline CE | 6 | 39.53 | 0.8043 | 0.3494 | 1.4266 | 0.7183 | 0.2547 |
+| Dataset | Method | Selected epoch | Accuracy (%) | Macro-AUROC | Macro-F1 | Test loss |
+|---|---|---:|---:|---:|---:|---:|
+| C16 | ABMIL | 2 | 82.9457 | 0.8707 | 0.8159 | 0.4165 |
+| C16 | Top-K 20% | 2 | 86.8217 | 0.9395 | 0.8617 | 0.3064 |
+| C17 | ABMIL | 17 | 79.0000 | 0.8367 | 0.5258 | 0.7025 |
+| C17 | Top-K 20% | - | - | - | - | - |
+| BRACS | ABMIL | 10 | 40.6977 | 0.7922 | 0.3439 | 1.6316 |
+| BRACS | Top-K 20% | 10 | 38.3721 | 0.7812 | 0.3208 | 1.6879 |
 
-For each row below: the **first command** reproduces the reported checkpoint's inference, and the **second and third commands** independently retrain and evaluate that row. Run these after setup/download. For verification without features, omit `--recompute` from the first command. For CPU execution, replace `--device cuda` with `--device cpu`.
+The C17 Top-K row is unavailable because the local notebook has no saved outputs. No three-dataset conclusion can be drawn for the current ratio.
 
-### R1: C16 baseline
+Relative to the saved notebook baselines, Top-K 20% improves C16 accuracy by **3.88 percentage points**, AUROC by **0.0688**, and macro-F1 by **0.0458**, with test loss decreasing by **0.1101**. BRACS accuracy decreases by **2.33 percentage points**, AUROC by **0.0110**, and macro-F1 by **0.0231**, with test loss increasing by **0.0563**. These are single-seed observations. Per-class recall, paired error changes, Brier scores, and ECE are not available from these current saved outputs. See the [observed-results discussion](observed_results.md) for the training-curve evidence and limitations.
 
-```bash
-python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --recompute --device cuda --output-dir results/pretrained_R1
-python -m research_extensions.train_extension --datasets C16 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
-python -m research_extensions.evaluate_extension --datasets C16 --methods baseline --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_R1
-```
+## Optional C16 attention overlays
 
-### R2: C17 baseline
-
-```bash
-python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --recompute --device cuda --output-dir results/pretrained_R2
-python -m research_extensions.train_extension --datasets C17 --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
-python -m research_extensions.evaluate_extension --datasets C17 --methods baseline --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_R2
-```
-
-### R3: BRACS baseline
+For the final C16 visualization cell, install the optional WSI dependencies:
 
 ```bash
-python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --recompute --device cuda --output-dir results/pretrained_R3
-python -m research_extensions.train_extension --datasets BRACS --methods baseline --epochs 30 --seed 42 --device cuda --output-dir results/top_k_128_full
-python -m research_extensions.evaluate_extension --datasets BRACS --methods baseline --runs-dir results/top_k_128_full --recompute --device cuda --output-dir results/top_k_128_full_R3
+python -m pip install openslide-python openslide-bin
 ```
 
-The supplied checkpoints and saved probabilities support checking the reported values to the displayed precision. Fresh retraining can differ across hardware, drivers, or dependency builds despite fixed seeds; bitwise-identical training across platforms is not guaranteed. These are **single-seed** comparisons, with no confidence intervals or claim of statistical significance.
+Place `test_067.tif`, `test_068.tif`, and `test_068.xml` in `slide/` under the project root. The helper restores the selected checkpoint and plots slide-level attention overlays and zooms. Colors represent within-slide attention percentiles; the displayed `P(tumor)` is a slide-level prediction. The default 512-pixel level-0 patch footprint is an assumption because the HDF5 files do not contain patch-size metadata.
 
-## Selected research idea: top-k attention pooling
+## Reference
 
-Keep the gated patch scorer, projection, classifier, and ordinary cross-entropy. For a bag of N valid patches, choose the k highest attention logits, apply softmax over those selected logits, and pool only their projected features. Padding must be excluded, and k must be capped at the number of valid patches. Selecting all patches must reproduce the baseline.
-
-The hypothesis is that concentrating on the most informative patches can reduce background dilution. A small k may discard distributed tissue evidence, so improvement is an experimental question. Define the candidate k values before extension experiments and select k using validation only. Preserve the baseline features, splits, optimizer, epoch budget, initialization, sampler seed, and validation checkpoint rule. Report macro-AUROC, macro-F1, accuracy, per-class recall, and probability quality on all three datasets. Top-k pooling still scores every patch; reduced feature extraction cost is not assumed.
-
-**Status:** implemented and covered by correctness and pipeline checks. The full 30-epoch paired comparison is complete; the section below provides the measured outcomes and links the discussion. The original baseline-only table above is retained for reference. Change k with `--top-k` and use a separate output directory for each candidate. Select k using validation only before final test evaluation. A complementary-head idea remains tentative; its exact design is not finalized. Exact ties at the selection cutoff follow `torch.topk` ordering and may differ across devices or patch permutations. With `k=1`, softmax supplies zero gradient to the attention scores; larger k values permit attention-score learning.
-
-## Completed comparison: baseline versus top-k
-
-Both methods completed **30 epochs on C16, C17, and BRACS**, with seed 42 and a fixed absolute **k=128**. Checkpoints use validation macro-AUROC + macro-F1 with earliest ties. The values below are from the fresh paired runs, not the one-epoch checks.
-
-| Dataset | Method | Epoch | Accuracy (%) | Macro-AUROC | Macro-F1 |
-| --- | --- | --- | --- | --- | --- |
-| C16 | Baseline | 3 | 88.37 | 0.9342 | 0.8668 |
-| C16 | Top-k 128 | 3 | 96.12 | 0.9842 | 0.9580 |
-| C17 | Baseline | 22 | 78.50 | 0.8243 | 0.5339 |
-| C17 | Top-k 128 | 5 | 81.50 | 0.8440 | 0.4952 |
-| BRACS | Baseline | 6 | 39.53 | 0.8043 | 0.3494 |
-| BRACS | Top-k 128 | 7 | 47.67 | 0.7962 | 0.3985 |
-
-- **C16:** top-k minus baseline AUROC +0.0500, macro-F1 +0.0912, accuracy +7.75 percentage points, and NLL -0.1007.
-- **C17:** top-k minus baseline AUROC +0.0197, macro-F1 -0.0386, accuracy +3.00 percentage points, and NLL -0.1704.
-- **BRACS:** top-k minus baseline AUROC -0.0081, macro-F1 +0.0490, accuracy +8.14 percentage points, and NLL -0.0199.
-
-These are single-seed observations at one exploratory k. Lower NLL is better; classification and calibration can change differently. Detailed class-level findings, interpretations, probability-quality metrics, and limitations are in the [observed-results discussion](research_extensions/evaluation_results/top_k_128_full/observed_results.md) and the [Word report](ECE1512_ProjectA_Research_Extension_Proposals_and_Evaluation.docx).
-
-All six selected checkpoints and training manifests are in `checkpoints/top_k_128_full/`; saved test probabilities, histories, splits, metrics, and figures are in `research_extensions/evaluation_results/top_k_128_full/`. Original baseline artifacts are preserved.
-
-Verify the packaged comparison without downloading features:
-
-```bash
-python -m research_extensions.evaluate_extension --methods baseline top_k --runs-dir research_extensions/evaluation_results/top_k_128_full --checkpoints-dir checkpoints/top_k_128_full --device cpu --output-dir results/top_k_128_verified
-```
-
-To repeat inference, add `--recompute` and use `--device cuda` after downloading the features.
-
-## 8. Validation and optional notebook/WSI workflow
-
-```bash
-python -m unittest discover -s research_extensions/tests -v
-```
-
-The suite checks baseline outputs against the notebook on unpadded bags, padding and permutation behavior, top-k selection/renormalization and gradients, all-patch equivalence, controlled learning, paired seeds/order, validation-only selection, known probability metrics, checkpoint relocation, saved k and cache invalidation, end-to-end paired evaluation, and the bundled results. Real-feature forward/backward integration checks run when all features are present; otherwise that test is explicitly skipped. Saved-artifact tests run without feature downloads.
-
-For the educational notebook and optional raw-WSI attention overlays:
-
-```bash
-python -m pip install -r requirements-notebook.txt
-python -m ipykernel install --sys-prefix --name python3 --display-name "Project A"
-python scripts/validate_notebook.py
-python scripts/execute_notebook.py
-```
-
-Alternatively select the new environment's interpreter in your notebook editor and run the cells in order. Set `PROJECT_DIR` if working outside the repository or in Colab. The notebook uses its own baseline workflow and does not automatically reuse `checkpoints/`. CLI runs and results are sufficient for reproducing the tables.
-
-The optional overlays need approximately **4.95 GB** of raw slide/XML assets:
-
-```bash
-python scripts/download_slides.py
-```
-
-Run the notebook again after downloading to generate the overlays. OpenSlide may require a supported native library on your platform; see the [OpenSlide Python installation instructions](https://openslide.org/api/python/).
-
-The reports' historical references to `results/<dataset>_<method>/best.pt` correspond to the byte-identical files now included under `checkpoints/<dataset>_<method>/best.pt`. Historical histories, predictions, and split files are included under `research_extensions/evaluation_results/`.
-
-## References
-
-- Ilse, Tomczak, and Welling. [Attention-based Deep Multiple Instance Learning](https://proceedings.mlr.press/v80/ilse18a.html), ICML 2018.
-- Ye, Linfeng. [WSI Feature](https://doi.org/10.5281/zenodo.23130543), course feature release, 2026.
+Ilse, Tomczak, and Welling. [Attention-based Deep Multiple Instance Learning](https://proceedings.mlr.press/v80/ilse18a.html), ICML 2018.
