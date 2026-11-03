@@ -2,7 +2,7 @@
 
 This project classifies whole-slide histopathology images using gated attention-based multiple instance learning (ABMIL) on fixed, pre-extracted medical-SSL patch features. The research extension uses **ratio-based Top-K attention pooling**, retaining the highest-scoring **20% of patches in each slide** (`conf.topk_ratio = 0.20`). The image encoder is fixed; training updates the MIL aggregator and classifier.
 
-The saved notebook outputs are the source of the results below. All three baseline notebooks contain completed 30-epoch runs. The C16 and BRACS Top-K notebooks also contain completed 30-epoch runs; **the local C17 Top-K notebook has no saved outputs**, so its 20% result is unavailable. The earlier fixed-128 experiments are a different pooling configuration and do not supply results for the current ratio.
+The saved notebook outputs are the source of the results below. All three baseline and all three Top-K notebooks contain completed 30-epoch runs, providing a comparison on C16, C17, and BRACS at the 20% ratio. The earlier fixed-128 experiments are a different pooling configuration and do not supply results for the current ratio.
 
 ## Included notebooks and code
 
@@ -18,7 +18,7 @@ Each Top-K notebook trains its selected dataset independently. Baseline training
 
 ## Setup
 
-Use 64-bit Python 3.12 and run from the repository root. The saved C16 and BRACS Top-K outputs report PyTorch **2.13.0+cu126**, CUDA available, and an **NVIDIA GeForce RTX 3080 Ti**.
+Use 64-bit Python 3.12 and run from the repository root. The saved Top-K outputs for all three datasets report PyTorch **2.13.0+cu126**, CUDA available, and an **NVIDIA GeForce RTX 3080 Ti**.
 
 ```bash
 git clone https://github.com/fred-mcmaster/Project_A.git
@@ -124,20 +124,20 @@ It scores every patch with the gated attention network, retains the `k` largest 
 
 ## Results from saved notebook outputs
 
-Values below are copied from **Step 7, final held-out test evaluation** (cell index 30) in the linked notebooks. Selected epochs are one-based; all five runs with saved results completed 30 epochs. Accuracy is a percentage, AUROC and F1 are macro averages, and test loss is mean cross-entropy (NLL; lower is better).
+Values below are copied from **Step 7, final held-out test evaluation** (cell index 30) in the linked notebooks. Selected epochs are one-based; all six runs completed 30 epochs. Accuracy is a percentage, AUROC and F1 are macro averages, and test loss is mean cross-entropy (NLL; lower is better).
 
 | Dataset | Method | Selected epoch | Accuracy (%) | Macro-AUROC | Macro-F1 | Test loss |
 |---|---|---:|---:|---:|---:|---:|
 | C16 | ABMIL | 2 | 82.9457 | 0.8707 | 0.8159 | 0.4165 |
 | C16 | Top-K 20% | 2 | 86.8217 | 0.9395 | 0.8617 | 0.3064 |
 | C17 | ABMIL | 17 | 79.0000 | 0.8367 | 0.5258 | 0.7025 |
-| C17 | Top-K 20% | - | - | - | - | - |
+| C17 | Top-K 20% | 5 | 80.5000 | 0.8663 | 0.4876 | 0.5164 |
 | BRACS | ABMIL | 10 | 40.6977 | 0.7922 | 0.3439 | 1.6316 |
 | BRACS | Top-K 20% | 10 | 38.3721 | 0.7812 | 0.3208 | 1.6879 |
 
-The C17 Top-K row is unavailable because the local notebook has no saved outputs. No three-dataset conclusion can be drawn for the current ratio.
+At this ratio, C16 improves across all four reported test metrics, C17 has mixed results, and BRACS declines across all four metrics.
 
-Relative to the saved notebook baselines, Top-K 20% improves C16 accuracy by **3.88 percentage points**, AUROC by **0.0688**, and macro-F1 by **0.0458**, with test loss decreasing by **0.1101**. BRACS accuracy decreases by **2.33 percentage points**, AUROC by **0.0110**, and macro-F1 by **0.0231**, with test loss increasing by **0.0563**. These are single-seed observations. Per-class recall, paired error changes, Brier scores, and ECE are not available from these current saved outputs. See the [observed-results discussion](observed_results.md) for the training-curve evidence and limitations.
+Relative to the saved notebook baselines, Top-K 20% improves C16 accuracy by **3.88 percentage points**, AUROC by **0.0688**, and macro-F1 by **0.0458**, with test loss decreasing by **0.1101**. C17 accuracy increases by **1.50 percentage points** and AUROC by **0.0296**, with test loss decreasing by **0.1861**, while macro-F1 decreases by **0.0382**. BRACS accuracy decreases by **2.33 percentage points**, AUROC by **0.0110**, and macro-F1 by **0.0231**, with test loss increasing by **0.0563**. These are single-seed observations. Per-class recall, paired error changes, Brier scores, and ECE are not available from these current saved outputs. See the [observed-results discussion](observed_results.md) for the training-curve evidence and limitations.
 
 ## Optional C16 attention overlays
 
